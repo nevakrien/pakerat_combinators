@@ -108,6 +108,30 @@ impl<T: PartialEq> PartialEq for CacheStatus<T> {
 impl<T: Eq> Eq for CacheStatus<T> {}
 pub type CacheEntry<'a,T = (),E  = syn::Error> = CacheStatus<Pakerat<(Cursor<'a>,T),E>>;
 
+impl<'a, T, E> CacheEntry<'a, T, E>
+where
+    T: Clone,
+    E: Error + Clone,
+{	
+	///this is used to finalize the result of a search
+	///
+	///it will automatically move pending results to full errors and panic on an empty cache
+    pub fn finalize<F: FnOnce() -> E>(&mut self, err_f: F) -> Pakerat<(Cursor<'a>,T), E> {
+        match self {
+            CacheStatus::Empty => unreachable!("bad finalize call on an empty cache"),
+            CacheStatus::Pending => {
+            	let err =  Err(PakeratError::Recursive(err_f()));
+            	*self = CacheStatus::Full(err.clone());
+            	err
+            	
+            },
+            CacheStatus::Full(res) => res.clone(),
+        }
+    }
+}
+
+
+
 
 pub type ArrayCache<'a,const L: usize,T = (),E  = syn::Error> = FixedCollection<CacheEntry<'a,T,E>, L>;
 
@@ -190,7 +214,7 @@ pub trait Cache<'a, T : Clone = (), E: Error + Clone = syn::Error, K = usize> {
 	///for instance "expr + term => expr" would not work because it causes an infinite left recursive loop. 
 	///but "term + expr => expr" will work
     fn parse_cached<P,FE>(&mut self,input:Cursor<'a>, key: impl Keyble<K> + Copy ,parser:&P,recurse_err:FE) -> Pakerat<(Cursor<'a>,T), E>
-    where P:Combinator<T, E, K> + ?Sized, FE:FnOnce() -> E, Self: Sized
+    where P:Combinator<'a, T, E, K> + ?Sized, FE:FnOnce() -> E, Self: Sized
     {	
     	let id = input.span().byte_range().start;
     	let spot = self.get_slot(id).get(key).expect("missing key");
@@ -223,6 +247,7 @@ impl<'a, T : Clone , E: Error + Clone , K, C > Cache<'a,T,E,K> for HashMap<usize
 
 pub type BasicCache<'a,const L: usize,T=(),E=syn::Error>= HashMap<usize, ArrayCache<'a,L, T, E>>;
 pub type FlexibleCache<'a,K,T=(),E=syn::Error>= HashMap<usize, HashCache<'a,K, T, E>>;
+// pub type StrCache<'a,T=(),E=syn::Error>= HashMap<usize, HashCache<'a,&'a str, T, E>>;
 
 impl<'a, T: Clone, E: Error + Clone, K, C> Cache<'a, T, E, K> for Vec<C>
 where
@@ -238,26 +263,4 @@ where
     }
 }
 
-
-impl<'a, T, E> CacheEntry<'a, T, E>
-where
-    T: Clone,
-    E: Error + Clone,
-{	
-	///this is used to finalize the result of a search
-	///
-	///it will automatically move pending results to full errors and panic on an empty cache
-    pub fn finalize<F: FnOnce() -> E>(&mut self, err_f: F) -> Pakerat<(Cursor<'a>,T), E> {
-        match self {
-            CacheStatus::Empty => unreachable!("bad finalize call on an empty cache"),
-            CacheStatus::Pending => {
-            	let err =  Err(PakeratError::Recursive(err_f()));
-            	*self = CacheStatus::Full(err.clone());
-            	err
-            	
-            },
-            CacheStatus::Full(res) => res.clone(),
-        }
-    }
-}
 

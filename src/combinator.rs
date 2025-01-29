@@ -1,3 +1,4 @@
+
 use std::fmt;
 // use crate::cache::CacheExt;
 use std::error::Error;
@@ -77,30 +78,33 @@ fn eq(&self, other: &PakeratError<E>) -> bool {
 ///result type used for internal cache managment
 pub type Pakerat<T,E = syn::Error> = Result<T,PakeratError<E>>;
 
-pub trait Combinator<T  =(), E :Error + Clone = syn::Error,K = usize,O : Clone=T>
-
-
+pub trait Combinator<'a,T  =(), E :Error + Clone = syn::Error,K = usize,O : Clone=T>
 {   
 
     ///this function respect the caching scheme and thus can work with recursive grammers
-    fn parse<'a>(&self, input: Cursor<'a>,state: &mut impl Cache<'a,O,E,K>) -> Pakerat<(Cursor<'a>, T), E>;
+    fn parse(&self, input: Cursor<'a>,state: &mut impl Cache<'a,O,E,K>) -> Pakerat<(Cursor<'a>, T), E>;
 
     ///similar to parse just for raw tokens
-    fn parse_ignore<'a>(&self, input: Cursor<'a>,state: &mut impl Cache<'a,O,E,K>) -> Pakerat<Cursor<'a>, E>{
+    fn parse_ignore(&self, input: Cursor<'a>,state: &mut impl Cache<'a,O,E,K>) -> Pakerat<Cursor<'a>, E>{
         let (ans,_) = self.parse(input,state)?;
         Ok(ans)
     }
 }
 
-
+// use crate::basic_parsers::AnyDelParser;
+// impl<T , E:Clone+Error, K, O :Clone> ConstCombinator<T,E,K,O> for AnyDelParser where for<'a> AnyDelParser: Combinator<'a, T, E, K, O>{}
+// trait ConstCombinator<T = (), E: Error + Clone = syn::Error, K = usize, O: Clone = T>:
+//     for<'a> Combinator<'a, T, E, K, O>
+// {
+// }
 
 pub struct CodeRef<'a>{
     pub start:Cursor<'a>,
     pub end:Cursor<'a>,
 }
 
-pub trait CombinatorExt<T, E :Error + Clone = syn::Error,K = usize,O : Clone=T> : Combinator<T,E,K,O>{
-    fn parse_recognize<'a>(&self, input: Cursor<'a>,state: &mut impl Cache<'a,O,E,K>) -> Pakerat<CodeRef<'a>, E>{
+pub trait CombinatorExt<'a, T, E :Error + Clone = syn::Error,K = usize,O : Clone=T> : Combinator<'a, T,E,K,O>{
+    fn parse_recognize(&self, input: Cursor<'a>,state: &mut impl Cache<'a,O,E,K>) -> Pakerat<CodeRef<'a>, E>{
         Ok(CodeRef{
             start:input,
             end: self.parse_ignore(input,state)?,
@@ -111,17 +115,17 @@ pub trait CombinatorExt<T, E :Error + Clone = syn::Error,K = usize,O : Clone=T> 
         make(self)
     }
 
-    fn parse_into<'a,V :From<T>,E2:Error + From<PakeratError<E>>>(&self, input: Cursor<'a>,state: &mut impl Cache<'a,O,E,K>) -> Result<(Cursor<'a>, V), E2>{
+    fn parse_into<V :From<T>,E2:Error + From<PakeratError<E>>>(&self, input: Cursor<'a>,state: &mut impl Cache<'a,O,E,K>) -> Result<(Cursor<'a>, V), E2>{
         let (cursor,t) = self.parse(input,state)?;
         Ok((cursor,t.into()))
     }
 
 }
 
-// pub trait CacheCombinator<T :Clone, E :Clone+Error = syn::Error,K : Copy = usize> : Combinator<T,E,K,T> {
-//     fn my_key(&self) -> K;
-//     fn make_error(&self,original_input: Cursor<'_>) -> E;
-//     fn parse_cached<'a>(&self, input: Cursor<'a>,state: &mut impl CacheExt<'a,T,E,K>) -> Pakerat<(Cursor<'a>, T), E>{
-//         state.parse_cached(input,self.my_key(),self,|| {self.make_error(input)})
-//     }
-// }
+pub trait CacheCombinator<'a, T :Clone, E :Clone+Error = syn::Error,K : Copy = usize> : Combinator<'a, T,E,K,T> {
+    fn my_key(&self) -> K;
+    fn make_error(&self,original_input: Cursor<'_>) -> E;
+    fn parse_cached(&self, input: Cursor<'a>,state: &mut impl Cache<'a,T,E,K>) -> Pakerat<(Cursor<'a>, T), E>{
+        state.parse_cached(input,self.my_key(),self,|| {self.make_error(input)})
+    }
+}

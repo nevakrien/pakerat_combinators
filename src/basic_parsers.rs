@@ -1,3 +1,4 @@
+use std::error::Error;
 use syn::__private::ToTokens;
 use syn::parse::ParseStream;
 use syn::LitInt;
@@ -226,15 +227,15 @@ pub struct MatchParser<'b>{
 	pub end:Cursor<'b>
 }
 
-impl<K, O:Clone> Combinator<(), DumbyError,K,O> for MatchParser<'_>{
-	fn parse<'a>(&self, input: Cursor<'a>,_state: &mut impl Cache<'a,O,DumbyError,K>) -> Pakerat<(Cursor<'a>,()), DumbyError>{
+impl<'a, K, O:Clone> Combinator<'a,(), DumbyError,K,O> for MatchParser<'_>{
+	fn parse(&self, input: Cursor<'a>,_state: &mut impl Cache<'a,O,DumbyError,K>) -> Pakerat<(Cursor<'a>,()), DumbyError>{
 		let ans = streams_just_match(self.start,self.end,input).map_err(PakeratError::Regular)?;
 		Ok((ans,()))
 	}
 }
 
-impl<K, O:Clone> Combinator<(), syn::Error,K,O> for MatchParser<'_>{
-	fn parse<'a>(&self, input: Cursor<'a>,_state: &mut impl Cache<'a,O,syn::Error,K>) -> Pakerat<(Cursor<'a>,()), syn::Error>{
+impl<'a, K, O:Clone> Combinator<'a, (), syn::Error,K,O> for MatchParser<'_>{
+	fn parse(&self, input: Cursor<'a>,_state: &mut impl Cache<'a,O,syn::Error,K>) -> Pakerat<(Cursor<'a>,()), syn::Error>{
 		let ans = streams_match(self.start,self.end,input,Delimiter::None,None)
 			.map_err(|e| PakeratError::Regular(e.into()))?;
 		Ok((ans,()))
@@ -246,9 +247,9 @@ macro_rules! define_parser {
         #[derive(Debug, Clone, Copy, PartialEq)]
         pub struct $name;
 
-        impl<K, O:Clone> Combinator<$output, syn::Error, K,O> for $name {
+        impl<'a, K, O:Clone> Combinator<'a, $output, syn::Error, K,O> for $name {
             #[inline]
-            fn parse<'a>(&self, input: Cursor<'a>, _state: &mut impl Cache<'a, O, syn::Error, K>) -> Pakerat<(Cursor<'a>, $output), syn::Error> {
+            fn parse(&self, input: Cursor<'a>, _state: &mut impl Cache<'a, O, syn::Error, K>) -> Pakerat<(Cursor<'a>, $output), syn::Error> {
                 if let Some((x, ans)) = input.$method() {
                     Ok((ans, x))
                 } else {
@@ -257,9 +258,9 @@ macro_rules! define_parser {
             }
         }
 
-        impl<K, O:Clone> Combinator<$output, DumbyError, K,O> for $name {
+        impl<'a, K, O:Clone> Combinator<'a, $output, DumbyError, K,O> for $name {
             #[inline]
-            fn parse<'a>(&self, input: Cursor<'a>, _state: &mut impl Cache<'a, O, DumbyError, K>) -> Pakerat<(Cursor<'a>, $output), DumbyError> {
+            fn parse(&self, input: Cursor<'a>, _state: &mut impl Cache<'a, O, DumbyError, K>) -> Pakerat<(Cursor<'a>, $output), DumbyError> {
                 if let Some((x, ans)) = input.$method() {
                     Ok((ans, x))
                 } else {
@@ -276,6 +277,7 @@ define_parser!(IdentParser, Ident, ident, "expected a name");
 define_parser!(LiteralParser, Literal, literal, "expected a literal (string char int etc)");
 define_parser!(LifetimeParser, Lifetime, lifetime, "expected a lifetime");
 
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct NumParser;
 
@@ -289,8 +291,8 @@ impl Parse for BasicInt {
     }
 }
 
-impl<K, O:Clone> Combinator<i64, syn::Error,K,O> for NumParser{
-	fn parse<'a>(&self, input: Cursor<'a>,_state: &mut impl Cache<'a,O,syn::Error,K>) -> Pakerat<(Cursor<'a>,i64), syn::Error>{
+impl<'a, K, O:Clone> Combinator<'a, i64, syn::Error,K,O> for NumParser{
+	fn parse(&self, input: Cursor<'a>,_state: &mut impl Cache<'a,O,syn::Error,K>) -> Pakerat<(Cursor<'a>,i64), syn::Error>{
 		if let Some((x, cursor)) = input.literal() {
             let i : BasicInt = syn:: parse2(x.into_token_stream()).map_err(PakeratError::Regular)?;
             Ok((cursor,i.0))
@@ -298,6 +300,57 @@ impl<K, O:Clone> Combinator<i64, syn::Error,K,O> for NumParser{
             Err(PakeratError::Regular(syn::Error::new(input.span(), "expected an integer")))
         }
 	}
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[repr(transparent)]
+pub struct DelParser(pub Delimiter);
+
+
+impl<'a, K, O:Clone> Combinator<'a, Cursor<'a>, DumbyError, K,O> for DelParser {
+    #[inline]
+    fn parse(&self, input: Cursor<'a>, _state: &mut impl Cache<'a, O, DumbyError, K>) -> Pakerat<(Cursor<'a>, Cursor<'a>), DumbyError>{
+        if let Some((x,_span, next)) = input.group(self.0) {
+            Ok((next, x))
+        } else {
+            Err(PakeratError::Regular(DumbyError))
+        }
+    }
+}
+
+impl<'a, K, O:Clone> Combinator<'a, Cursor<'a>, syn::Error, K,O> for DelParser {
+    #[inline]
+    fn parse(&self, input: Cursor<'a>, _state: &mut impl Cache<'a, O, syn::Error, K>) -> Pakerat<(Cursor<'a>, Cursor<'a>), syn::Error>{
+        if let Some((x,_span, next)) = input.group(self.0) {
+            Ok((next, x))
+        } else {
+            Err(PakeratError::Regular(syn::Error::new(input.span(),format!("expected {}",get_start_del(self.0)))))
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct AnyDelParser;
+impl<'a, K, O:Clone> Combinator<'a, Cursor<'a>, DumbyError, K,O> for AnyDelParser {
+    #[inline]
+    fn parse(&self, input: Cursor<'a>, _state: &mut impl Cache<'a, O, DumbyError, K>) -> Pakerat<(Cursor<'a>, Cursor<'a>), DumbyError>{
+        if let Some((x,_,_, next)) = input.any_group() {
+            Ok((next, x))
+        } else {
+            Err(PakeratError::Regular(DumbyError))
+        }
+    }
+}
+
+impl<'a, K, O:Clone> Combinator<'a, Cursor<'a>, syn::Error, K,O> for AnyDelParser {
+    #[inline]
+    fn parse(&self, input: Cursor<'a>, _state: &mut impl Cache<'a, O, syn::Error, K>) -> Pakerat<(Cursor<'a>, Cursor<'a>), syn::Error>{
+        if let Some((x,_,_, next)) = input.any_group() {
+            Ok((next, x))
+        } else {
+            Err(PakeratError::Regular(syn::Error::new(input.span(),"expected one of '{[('")))
+        }
+    }
 }
 
 #[cfg(test)]
@@ -308,7 +361,7 @@ use std::collections::HashMap;
 use super::*;
     use proc_macro2::TokenStream;
     use syn::buffer::{Cursor, TokenBuffer};
-    use crate::cache::{ArrayCache};
+    
 
     /// Macro to safely create a `TokenBuffer` and `Cursor` with a proper lifetime.
     macro_rules! token_cursor {
