@@ -120,8 +120,8 @@ fn array_cache() {
 ///a cache that allways returns a value in get
 #[repr(transparent)]
 #[derive(Clone,PartialEq)]
-pub struct HashCache<'a,K : Hash+Eq,T = (),E : Error = syn::Error>(pub HashMap<K,CacheEntry<'a,T,E>>);
-impl<'a,T,E:Error,K : Hash+Eq> Collection<CacheEntry<'a,T,E>,K> for HashCache<'a,K,T,E>{
+pub struct HashCache<'a,K : Hash+Eq,T : Clone = (),E : Error + Clone = syn::Error>(pub HashMap<K,CacheEntry<'a,T,E>>);
+impl<'a,T : Clone,E:Error + Clone,K : Hash+Eq> Collection<CacheEntry<'a,T,E>,K> for HashCache<'a,K,T,E>{
 	#[inline]
 	fn get(&mut self, key: impl Keyble<K>) -> Option<&mut CacheEntry<'a,T,E>>  {
 		Some(self.0.entry(key.get_key()).or_insert(CacheStatus::Empty))
@@ -129,20 +129,20 @@ impl<'a,T,E:Error,K : Hash+Eq> Collection<CacheEntry<'a,T,E>,K> for HashCache<'a
 }
 
 // Implement `Index` for immutable access
-impl<'a, K: Hash + Eq, T,E:Error> Index<K> for HashCache<'a,K, T,E> {
+impl<'a, K: Hash + Eq, T:Clone,E:Error+ Clone> Index<K> for HashCache<'a,K, T,E> {
     type Output = CacheEntry<'a,T,E>;
 
     fn index(&self, key: K) -> &Self::Output {
         self.0.get(&key).unwrap_or(&CacheStatus::Empty)
     }
 }
-impl<K: Hash + Eq, T,E:Error> IndexMut<K> for HashCache<'_, K, T, E> {
+impl<K: Hash + Eq, T:Clone,E:Error+ Clone> IndexMut<K> for HashCache<'_, K, T, E> {
     fn index_mut(&mut self, key: K) -> &mut Self::Output {
         self.0.entry(key).or_insert(CacheStatus::Empty)
     }
 }
 
-impl<K :Hash+Eq, T, E : Error> Default for HashCache<'_,K,T,E>{
+impl<K :Hash+Eq, T:Clone,E:Error+ Clone> Default for HashCache<'_,K,T,E>{
 
 fn default() -> Self { HashCache(HashMap::new()) }
 }
@@ -153,11 +153,11 @@ fn hash_cache() {
 	assert!(matches!(*map.get("hey").unwrap(),CacheStatus::Empty));
 }
 
-pub trait Cache<'a, T=(), E : Error= syn::Error, K=usize>: Collection<CacheEntry<'a, T, E>, K> {
+pub trait CacheSpot<'a, T:Clone=(), E : Error+Clone= syn::Error, K=usize>: Collection<CacheEntry<'a, T, E>, K> {
 	fn clear(&mut self);
 }
 
-impl<'a, const L: usize, E : Error,T> Cache<'a, T, E, usize> for ArrayCache<'a,L,T,E> 
+impl<'a, const L: usize, E : Error+Clone,T:Clone> CacheSpot<'a, T, E, usize> for ArrayCache<'a,L,T,E> 
 {	
 	fn clear(&mut self) {
 		for x in self.0.iter_mut() {
@@ -166,7 +166,7 @@ impl<'a, const L: usize, E : Error,T> Cache<'a, T, E, usize> for ArrayCache<'a,L
 	}
 }
 
-impl<'a, K: Hash + Eq, E : Error,T> Cache<'a, T, E, K> for HashCache<'a,K,T,E> 
+impl<'a, K: Hash + Eq, E : Error+Clone,T:Clone> CacheSpot<'a, T, E, K> for HashCache<'a,K,T,E> 
 {	
 	fn clear(&mut self) {
 		self.0 = HashMap::new();
@@ -174,17 +174,26 @@ impl<'a, K: Hash + Eq, E : Error,T> Cache<'a, T, E, K> for HashCache<'a,K,T,E>
 }
 
 
-/// Helper Trait for Cache
-pub trait CacheExt<'a, T :Clone, E:Clone + Error, K>: Cache<'a, T, E, K> + Sized{
-    #[inline(always)]
-    fn get_existing(&mut self, key: impl Keyble<K>) -> &mut CacheEntry<'a, T, E>{
-    	self.get(key).unwrap()
-    }
 
+pub trait Cache<'a, T : Clone = (), E: Error + Clone = syn::Error, K = usize> {
+    /// The type of cache slot stored in the cache
+    type Item: CacheSpot<'a, T, E, K>;
+
+    /// Retrieves the cache for the byte anotated by slot
+    fn get_slot(&mut self, slot: usize) -> &mut Self::Item;
+
+    ///this function implements caching which will never break any valid peg parser and will never return wrong results.
+	///
+	///it detects most potential infinite loops by keeping track of all the pending calls. 
+	///
+	///however it will still reject some grammers.
+	///for instance "expr + term => expr" would not work because it causes an infinite left recursive loop. 
+	///but "term + expr => expr" will work
     fn parse_cached<P,FE>(&mut self,input:Cursor<'a>, key: impl Keyble<K> + Copy ,parser:&P,recurse_err:FE) -> Pakerat<(Cursor<'a>,T), E>
-    where P:Combinator<T, E, K> + ?Sized, FE:FnOnce() -> E
+    where P:Combinator<T, E, K> + ?Sized, FE:FnOnce() -> E, Self: Sized
     {	
-    	let spot = self.get_existing(key);
+    	let id = input.span().byte_range().start;
+    	let spot = self.get_slot(id).get(key).expect("missing key");
     	match spot{
     		CacheStatus::Full(res) => res.clone(),
     		CacheStatus::Empty => {
@@ -192,7 +201,7 @@ pub trait CacheExt<'a, T :Clone, E:Clone + Error, K>: Cache<'a, T, E, K> + Sized
     			let ans = parser.parse(input,self);
 
     			//need to get spot again since parse may of changed it
-    			let spot = self.get_existing(key);
+    			let spot = self.get_slot(id).get(key).expect("missing key");
     			*spot = CacheStatus::Full(ans.clone());
     			ans
     		}
@@ -203,34 +212,27 @@ pub trait CacheExt<'a, T :Clone, E:Clone + Error, K>: Cache<'a, T, E, K> + Sized
     		},
     	}
     }
-
-    #[inline]
-    fn try_get(&mut self, key: impl Keyble<K>,spot:Cursor) -> syn::Result<&mut CacheEntry<'a, T, E>> {
-        self.get(key)
-            .ok_or_else(|| syn::Error::new(spot.span(), "Key missing"))
-    }
 }
 
-impl<'a, T, E, K, C> CacheExt<'a, T, E, K> for C
+impl<'a, T : Clone , E: Error + Clone , K, C > Cache<'a,T,E,K> for HashMap<usize,C> where C : CacheSpot<'a, T, E, K> + Default{
+	type Item = C;
+	fn get_slot(&mut self, slot: usize) -> &mut C {
+		self.entry(slot).or_default()
+	}
+}
+
+impl<'a, T: Clone, E: Error + Clone, K, C> Cache<'a, T, E, K> for Vec<C>
 where
-    T: Clone,
-    E: Clone + Error,
-    C: Cache<'a, T, E, K>, // Ensures it only applies to valid `Cache` types
-{}
+    C: CacheSpot<'a, T, E, K> + Default,
+{
+    type Item = C;
 
-#[test]
-fn cache_refs() {
-	#[allow(dead_code)]
-	fn check_bounds<'a, P,FE>(cache: &mut ArrayCache<'a,9>,input:Cursor<'a>, key: &usize,parser:&P,recurse_err:FE) -> Pakerat<(Cursor<'a>,())>
-	where P:Combinator<()>, FE:FnOnce() -> syn::Error{
-		CacheExt::parse_cached(cache,input,key,parser,recurse_err)
-	}
-
-	#[allow(dead_code)]
-	fn check_bounds_hash<'a, P,FE>(cache: &mut HashCache<'a,&'a str>,input:Cursor<'a>, key: &'a str,parser:&P,recurse_err:FE) -> Pakerat<(Cursor<'a>,())>
-	where P: Combinator<(),syn::Error,&'a str>, FE:FnOnce() -> syn::Error{
-		CacheExt::parse_cached(cache,input,key,parser,recurse_err)
-	}
+    fn get_slot(&mut self, slot: usize) -> &mut C {
+        if slot >= self.len() {
+            self.resize_with(slot + 1,C::default);
+        }
+        &mut self[slot]
+    }
 }
 
 
@@ -255,3 +257,4 @@ where
         }
     }
 }
+
