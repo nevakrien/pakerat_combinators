@@ -303,6 +303,7 @@ impl<K, O:Clone> Combinator<i64, syn::Error,K,O> for NumParser{
 #[cfg(test)]
 mod tests {
     
+use crate::cache::BasicCache;
 use std::collections::HashMap;
 use super::*;
     use proc_macro2::TokenStream;
@@ -324,7 +325,7 @@ use super::*;
         token_cursor!(buffer2, "let x = 42;");
         let parser = MatchParser { start: buffer1, end: Cursor::empty() };
 
-        let mut cache: HashMap<usize, ArrayCache<0, (), syn::Error>> = HashMap::new();
+        let mut cache: BasicCache<0> = HashMap::new();
 
         let (remaining, _) = parser.parse(buffer2, &mut cache).unwrap();
         assert!(remaining.eof(), "Expected to consume the entire input, but some tokens remain.");
@@ -336,7 +337,7 @@ use super::*;
         token_cursor!(buffer2, "let x = 42;");
         let parser = MatchParser { start: buffer1, end: Cursor::empty() };
 
-        let mut cache: HashMap<usize, ArrayCache<0, (), syn::Error>> = HashMap::new();
+        let mut cache: BasicCache<0> = HashMap::new();
 
 
         let (remaining, _) = parser.parse(buffer2, &mut cache).unwrap();
@@ -349,7 +350,7 @@ use super::*;
         token_cursor!(buffer2, "let x = 42; let y = 10;");
         let parser = MatchParser { start: buffer1, end: Cursor::empty() };
 
-        let mut cache: HashMap<usize, ArrayCache<0, (), syn::Error>> = HashMap::new();
+        let mut cache: BasicCache<0> = HashMap::new();
 
         let (remaining, _) = parser.parse(buffer2, &mut cache).unwrap();
         assert!(
@@ -364,7 +365,7 @@ use super::*;
         token_cursor!(buffer2, "let x = 43;");
         let parser = MatchParser { start: buffer1, end: Cursor::empty() };
 
-        let mut cache: HashMap<usize, ArrayCache<0, (), syn::Error>> = HashMap::new();
+        let mut cache: BasicCache<0> = HashMap::new();
 
         let result = parser.parse(buffer2, &mut cache);
         assert!(result.is_err(), "DumbyError parser should have failed on mismatched input.");
@@ -376,7 +377,7 @@ use super::*;
         token_cursor!(buffer2, "let x = 43;");
         let parser = MatchParser { start: buffer1, end: Cursor::empty() };
 
-        let mut cache: HashMap<usize, ArrayCache<0, (), syn::Error>> = HashMap::new();
+        let mut cache: BasicCache<0> = HashMap::new();
 
         let result = parser.parse(buffer2, &mut cache);
         assert!(result.is_err(), "SynError parser should have failed on mismatched input.");
@@ -388,7 +389,7 @@ use super::*;
         token_cursor!(buffer2, "let x =");
         let parser = MatchParser { start: buffer1, end: Cursor::empty() };
 
-        let mut cache: HashMap<usize, ArrayCache<0, (), DumbyError>> = HashMap::new();
+        let mut cache: BasicCache<0, (), DumbyError> = HashMap::new();
 
 
         let result = parser.parse(buffer2, &mut cache);
@@ -401,7 +402,7 @@ use super::*;
         token_cursor!(buffer2, "let x =");
         let parser = MatchParser { start: buffer1, end: Cursor::empty() };
 
-        let mut cache: HashMap<usize, ArrayCache<0, (), syn::Error>> = HashMap::new();
+        let mut cache: BasicCache<0> = HashMap::new();
 
         let result = parser.parse(buffer2, &mut cache);
         assert!(result.is_err(), "SynError parser should have failed on incomplete input.");
@@ -413,7 +414,7 @@ use super::*;
         token_cursor!(buffer2, "let x = 42; let y = 10; let z = 20;");
         let parser = MatchParser { start: buffer2, end: Cursor::empty() }; // Reverse case: expected is longer
 
-        let mut cache: HashMap<usize, ArrayCache<0, (), syn::Error>> = HashMap::new();
+        let mut cache: BasicCache<0> = HashMap::new();
 
         let result = parser.parse(buffer1, &mut cache);
         assert!(result.is_err(), "Parser should fail when expected is longer than input.");
@@ -439,7 +440,7 @@ use super::*;
 	    
 	    let parser = MatchParser { start, end };
 
-	    let mut cache: HashMap<usize, ArrayCache<0, (), syn::Error>> = HashMap::new();
+	    let mut cache: BasicCache<0> = HashMap::new();
 
 	    let (remaining, _) = parser.parse(buffer, &mut cache).unwrap();
 

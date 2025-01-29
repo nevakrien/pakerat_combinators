@@ -221,6 +221,9 @@ impl<'a, T : Clone , E: Error + Clone , K, C > Cache<'a,T,E,K> for HashMap<usize
 	}
 }
 
+pub type BasicCache<'a,const L: usize,T=(),E=syn::Error>= HashMap<usize, ArrayCache<'a,L, T, E>>;
+pub type FlexibleCache<'a,K,T=(),E=syn::Error>= HashMap<usize, HashCache<'a,K, T, E>>;
+
 impl<'a, T: Clone, E: Error + Clone, K, C> Cache<'a, T, E, K> for Vec<C>
 where
     C: CacheSpot<'a, T, E, K> + Default,
