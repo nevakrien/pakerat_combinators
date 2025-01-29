@@ -16,7 +16,7 @@ pub trait Keyble<K  = usize>{
 impl<K:Clone> Keyble<K> for K{
 	#[inline]
 	fn get_key(self) -> K{
-		self.clone()
+		self
 	}
 }
 
@@ -153,19 +153,38 @@ fn hash_cache() {
 	assert!(matches!(*map.get("hey").unwrap(),CacheStatus::Empty));
 }
 
-pub trait Cache<'a, T=(), E : Error= syn::Error, K=usize>: Collection<CacheEntry<'a, T, E>, K> {}
+pub trait Cache<'a, T=(), E : Error= syn::Error, K=usize>: Collection<CacheEntry<'a, T, E>, K> {
+	fn clear(&mut self);
+}
+
+impl<'a, const L: usize, E : Error,T> Cache<'a, T, E, usize> for ArrayCache<'a,L,T,E> 
+{	
+	fn clear(&mut self) {
+		for x in self.0.iter_mut() {
+			*x = CacheStatus::Empty;
+		}
+	}
+}
+
+impl<'a, K: Hash + Eq, E : Error,T> Cache<'a, T, E, K> for HashCache<'a,K,T,E> 
+{	
+	fn clear(&mut self) {
+		self.0 = HashMap::new();
+	}
+}
+
 
 /// Helper Trait for Cache
-pub trait CacheExt<'a, T :Clone, E:Clone + Error, K>: Cache<'a, T, E, K> {
+pub trait CacheExt<'a, T :Clone, E:Clone + Error, K>: Cache<'a, T, E, K> + Sized{
     #[inline(always)]
     fn get_existing(&mut self, key: impl Keyble<K>) -> &mut CacheEntry<'a, T, E>{
     	self.get(key).unwrap()
     }
 
-    fn parse_cached<P,FE>(&mut self,input:Cursor<'a>, key: impl Keyble<K> + Copy ,parser:P,recurse_err:FE) -> Pakerat<(Cursor<'a>,T), E>
-    where P:Combinator<T, E, K>, FE:FnOnce() -> E, Self: Sized
+    fn parse_cached<P,FE>(&mut self,input:Cursor<'a>, key: impl Keyble<K> + Copy ,parser:&P,recurse_err:FE) -> Pakerat<(Cursor<'a>,T), E>
+    where P:Combinator<T, E, K> + ?Sized, FE:FnOnce() -> E
     {	
-    	let spot = self.get(key).unwrap();
+    	let spot = self.get_existing(key);
     	match spot{
     		CacheStatus::Full(res) => res.clone(),
     		CacheStatus::Empty => {
@@ -192,11 +211,6 @@ pub trait CacheExt<'a, T :Clone, E:Clone + Error, K>: Cache<'a, T, E, K> {
     }
 }
 
-impl<'a, T, E : Error, K, C> Cache<'a, T, E, K> for C
-where
-    C: Collection<CacheEntry<'a, T, E>, K>, // Any Collection that stores CacheEntry is automatically a Cache
-{}
-
 impl<'a, T, E, K, C> CacheExt<'a, T, E, K> for C
 where
     T: Clone,
@@ -207,8 +221,14 @@ where
 #[test]
 fn cache_refs() {
 	#[allow(dead_code)]
-	fn check_bounds<'a, P,FE>(cache: &mut ArrayCache<'a,9>,input:Cursor<'a>, key: &usize,parser:P,recurse_err:FE) -> Pakerat<(Cursor<'a>,())>
+	fn check_bounds<'a, P,FE>(cache: &mut ArrayCache<'a,9>,input:Cursor<'a>, key: &usize,parser:&P,recurse_err:FE) -> Pakerat<(Cursor<'a>,())>
 	where P:Combinator<()>, FE:FnOnce() -> syn::Error{
+		CacheExt::parse_cached(cache,input,key,parser,recurse_err)
+	}
+
+	#[allow(dead_code)]
+	fn check_bounds_hash<'a, P,FE>(cache: &mut HashCache<'a,&'a str>,input:Cursor<'a>, key: &'a str,parser:&P,recurse_err:FE) -> Pakerat<(Cursor<'a>,())>
+	where P: Combinator<(),syn::Error,&'a str>, FE:FnOnce() -> syn::Error{
 		CacheExt::parse_cached(cache,input,key,parser,recurse_err)
 	}
 }
