@@ -6,21 +6,53 @@ use crate::combinator::Combinator;
 
 use std::marker::PhantomData;
 
-pub struct Inside<'b, IN,OUT,T, K, O>
+///this struct is mainly used for delimiter with delimiters as a way to parse "{something}"
+///
+///it can also be used to remove a prefix but thats about it
+///
+/// # Example Usage
+/// ```rust
+/// use proc_macro2::Delimiter;
+/// use syn::buffer::TokenBuffer;
+/// use pakerat_combinators::basic_parsers::{DelParser, IdentParser};
+/// use pakerat_combinators::multi::{Inside};
+/// use pakerat_combinators::cache::BasicCache;
+/// use pakerat_combinators::combinator::Combinator;
+/// use std::marker::PhantomData;
+/// 
+/// let tokens = "{ my_var }".parse().unwrap();
+/// let buffer = TokenBuffer::new2(tokens);
+///
+///
+/// let my_parser = Inside {
+///     outside: DelParser(Delimiter::Brace),
+///     inside: IdentParser,
+///     _phantom: PhantomData,
+/// };
+///
+/// let mut cache  = BasicCache::<0>::new();
+/// let (_, parsed_ident) = my_parser.parse(buffer.begin(), &mut cache).unwrap();
+/// assert_eq!(parsed_ident.to_string(), "my_var");
+/// ```
+pub struct Inside<'b, INNER,OUT,T, K, O>
 where
-    IN: Combinator<'b, T, syn::Error, K, O>,
+    INNER: Combinator<'b, T, syn::Error, K, O>,
     OUT: Combinator<'b, Cursor<'b>, syn::Error, K, O>,
     O: Clone,
-{
+{	
+	///finds the start for the inside parser
     pub outside: OUT,
-    pub inside: IN,
+    ///main parser that returns the final output
+    pub inside: INNER,
+    ///used so we can have generics
     pub _phantom: PhantomData<(Cursor<'b>, T,K, O)>,
 }
 
-impl<'a, IN, OUT, T, K, O> Combinator<'a, T, syn::Error, K, O> for Inside<'a, IN, OUT, T, K, O>
+
+impl<'a, INNER, OUT, T, K, O> Combinator<'a, T, syn::Error, K, O> for Inside<'a, INNER, OUT, T, K, O>
 where
     OUT: Combinator<'a, Cursor<'a>, syn::Error, K, O>,
-    IN: Combinator<'a, T, syn::Error, K, O>,
+    INNER: Combinator<'a, T, syn::Error, K, O>,
     O: Clone,
 {
     fn parse(

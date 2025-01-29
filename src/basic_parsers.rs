@@ -1,4 +1,3 @@
-use std::error::Error;
 use syn::__private::ToTokens;
 use syn::parse::ParseStream;
 use syn::LitInt;
@@ -354,7 +353,7 @@ impl<'a, K, O:Clone> Combinator<'a, Cursor<'a>, syn::Error, K,O> for AnyDelParse
 }
 
 #[cfg(test)]
-mod tests {
+mod exact_match_tests {
     
 use crate::cache::BasicCache;
 use std::collections::HashMap;
@@ -373,7 +372,7 @@ use super::*;
     }
 
     #[test]
-    fn test_match_parser_exact_match_dumby_error() {
+    fn match_parser_exact_match_dumby_error() {
         token_cursor!(buffer1, "let x = 42;");
         token_cursor!(buffer2, "let x = 42;");
         let parser = MatchParser { start: buffer1, end: Cursor::empty() };
@@ -385,7 +384,7 @@ use super::*;
     }
 
     #[test]
-    fn test_match_parser_exact_match_syn_error() {
+    fn match_parser_exact_match_syn_error() {
         token_cursor!(buffer1, "let x = 42;");
         token_cursor!(buffer2, "let x = 42;");
         let parser = MatchParser { start: buffer1, end: Cursor::empty() };
@@ -398,7 +397,7 @@ use super::*;
     }
 
     #[test]
-    fn test_match_parser_subset_should_pass() {
+    fn match_parser_subset_should_pass() {
         token_cursor!(buffer1, "let x = 42;");
         token_cursor!(buffer2, "let x = 42; let y = 10;");
         let parser = MatchParser { start: buffer1, end: Cursor::empty() };
@@ -413,7 +412,7 @@ use super::*;
     }
 
     #[test]
-    fn test_match_parser_mismatch_dumby_error() {
+    fn match_parser_mismatch_dumby_error() {
         token_cursor!(buffer1, "let x = 42;");
         token_cursor!(buffer2, "let x = 43;");
         let parser = MatchParser { start: buffer1, end: Cursor::empty() };
@@ -425,7 +424,7 @@ use super::*;
     }
 
     #[test]
-    fn test_match_parser_mismatch_syn_error() {
+    fn match_parser_mismatch_syn_error() {
         token_cursor!(buffer1, "let x = 42;");
         token_cursor!(buffer2, "let x = 43;");
         let parser = MatchParser { start: buffer1, end: Cursor::empty() };
@@ -437,7 +436,7 @@ use super::*;
     }
 
     #[test]
-    fn test_match_parser_incomplete_input_dumby_error() {
+    fn match_parser_incomplete_input_dumby_error() {
         token_cursor!(buffer1, "let x = 42;");
         token_cursor!(buffer2, "let x =");
         let parser = MatchParser { start: buffer1, end: Cursor::empty() };
@@ -450,7 +449,7 @@ use super::*;
     }
 
     #[test]
-    fn test_match_parser_incomplete_input_syn_error() {
+    fn match_parser_incomplete_input_syn_error() {
         token_cursor!(buffer1, "let x = 42;");
         token_cursor!(buffer2, "let x =");
         let parser = MatchParser { start: buffer1, end: Cursor::empty() };
@@ -462,7 +461,7 @@ use super::*;
     }
 
     #[test]
-    fn test_match_parser_extra_tokens_fail() {
+    fn match_parser_extra_tokens_fail() {
         token_cursor!(buffer1, "let x = 42;");
         token_cursor!(buffer2, "let x = 42; let y = 10; let z = 20;");
         let parser = MatchParser { start: buffer2, end: Cursor::empty() }; // Reverse case: expected is longer
@@ -474,7 +473,7 @@ use super::*;
     }
 
 	#[test]
-	fn test_match_parser_non_empty_end() {
+	fn match_parser_non_empty_end() {
 	    token_cursor!(buffer, "let x = 42; let y = 10;");
 	    
 	    let start = buffer;

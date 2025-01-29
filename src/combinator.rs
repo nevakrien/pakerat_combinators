@@ -74,7 +74,6 @@ fn eq(&self, other: &PakeratError<E>) -> bool {
 }
 }
 
-
 ///result type used for internal cache managment
 pub type Pakerat<T,E = syn::Error> = Result<T,PakeratError<E>>;
 
@@ -90,6 +89,20 @@ pub trait Combinator<'a,T  =(), E :Error + Clone = syn::Error,K = usize,O : Clon
         Ok(ans)
     }
 }
+
+
+
+// #[test]
+// fn can_rc(){
+
+//     use std::rc::Rc;
+//     use crate::basic_parsers::MatchParser;
+
+//     let _parser : Rc<dyn Combinator> = Rc::new(
+        
+//         MatchParser { start: Cursor::empty(), end: Cursor::empty() }
+//     );
+// }
 
 // use crate::basic_parsers::AnyDelParser;
 // impl<T , E:Clone+Error, K, O :Clone> ConstCombinator<T,E,K,O> for AnyDelParser where for<'a> AnyDelParser: Combinator<'a, T, E, K, O>{}
