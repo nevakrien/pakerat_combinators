@@ -1,4 +1,5 @@
 
+use crate::cache::FlexibleCache;
 use std::fmt;
 // use crate::cache::CacheExt;
 use std::error::Error;
@@ -91,18 +92,40 @@ pub trait Combinator<'a,T  =(), E :Error + Clone = syn::Error,K = usize,O : Clon
 }
 
 
+/// Separate from [crate::combinator::Combinator] so we can use it as a dyn
+pub trait SpecificCombinator<'a, T = (), E:Clone+Error = syn::Error, K =usize, O: Clone = T, C: Cache<'a, O , E, K> = FlexibleCache<'a,K,T,E>> {
+    fn parse(&self, input: Cursor<'a>, state: &mut C) -> Pakerat<(Cursor<'a>, T), E>;
+    fn parse_ignore(&self, input: Cursor<'a>,state: &mut C) -> Pakerat<Cursor<'a>, E>;
 
-// #[test]
-// fn can_rc(){
 
-//     use std::rc::Rc;
-//     use crate::basic_parsers::MatchParser;
+}
 
-//     let _parser : Rc<dyn Combinator> = Rc::new(
+/// Implement SpecificCombinator for all Combinator implementations
+impl<'a, T, E:Clone+Error, K, O: Clone, C, F> SpecificCombinator<'a, T, E, K, O, C> for F
+where
+    F: Combinator<'a, T, E, K, O> + ?Sized,
+    C: Cache<'a, O, E, K>,
+{
+    fn parse(&self, input: Cursor<'a>, state: &mut C) -> Pakerat<(Cursor<'a>, T), E> {
+        Combinator::parse(self,input, state)
+    }
+    fn parse_ignore(&self, input: Cursor<'a>,state: &mut C) -> Pakerat<Cursor<'a>, E>{
+        Combinator::parse_ignore(self,input, state)
+    }
+}
+
+
+#[test]
+fn can_rc(){
+
+    use std::rc::Rc;
+    use crate::basic_parsers::MatchParser;
+
+    let _parser : Rc<dyn SpecificCombinator> = Rc::new(
         
-//         MatchParser { start: Cursor::empty(), end: Cursor::empty() }
-//     );
-// }
+        MatchParser { start: Cursor::empty(), end: Cursor::empty() }
+    );
+}
 
 // use crate::basic_parsers::AnyDelParser;
 // impl<T , E:Clone+Error, K, O :Clone> ConstCombinator<T,E,K,O> for AnyDelParser where for<'a> AnyDelParser: Combinator<'a, T, E, K, O>{}
