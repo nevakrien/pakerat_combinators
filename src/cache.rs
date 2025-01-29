@@ -214,7 +214,7 @@ pub trait Cache<'a, T : Clone = (), E: Error + Clone = syn::Error, K = usize> {
 	///for instance "expr + term => expr" would not work because it causes an infinite left recursive loop. 
 	///but "term + expr => expr" will work
     fn parse_cached<P,FE>(&mut self,input:Cursor<'a>, key: impl Keyble<K> + Copy ,parser:&P,recurse_err:FE) -> Pakerat<(Cursor<'a>,T), E>
-    where P:Combinator<'a, T, E, K> + ?Sized, FE:FnOnce() -> E, Self: Sized
+    where P:Combinator<'a,T, E, K,T,Self> + ?Sized, FE:FnOnce() -> E, Self: Sized
     {	
     	let id = input.span().byte_range().start;
     	let spot = self.get_slot(id).get(key).expect("missing key");
@@ -236,6 +236,7 @@ pub trait Cache<'a, T : Clone = (), E: Error + Clone = syn::Error, K = usize> {
     		},
     	}
     }
+
 }
 
 impl<'a, T : Clone , E: Error + Clone , K, C > Cache<'a,T,E,K> for HashMap<usize,C> where C : CacheSpot<'a, T, E, K> + Default{

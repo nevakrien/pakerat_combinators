@@ -1,8 +1,7 @@
-use crate::combinator::Pakerat;
+use crate::combinator::{Pakerat,Combinator};
 use crate::cache::Cache;
 use crate::combinator::PakeratError;
 use syn::buffer::Cursor;
-use crate::combinator::Combinator;
 
 use std::marker::PhantomData;
 
@@ -34,31 +33,33 @@ use std::marker::PhantomData;
 /// let (_, parsed_ident) = my_parser.parse(buffer.begin(), &mut cache).unwrap();
 /// assert_eq!(parsed_ident.to_string(), "my_var");
 /// ```
-pub struct Inside<'b, INNER,OUT,T, K, O>
+pub struct Inside<'b, INNER,OUT,T, K, O, C>
 where
-    INNER: Combinator<'b, T, syn::Error, K, O>,
-    OUT: Combinator<'b, Cursor<'b>, syn::Error, K, O>,
-    O: Clone,
+    INNER: Combinator<'b, T, syn::Error, K, O,C>,
+    OUT: Combinator<'b, Cursor<'b>, syn::Error, K, O,C>,
+    O: Clone, 
+    C: Cache<'b, O, syn::Error, K>
 {	
 	///finds the start for the inside parser
     pub outside: OUT,
     ///main parser that returns the final output
     pub inside: INNER,
     ///used so we can have generics
-    pub _phantom: PhantomData<(Cursor<'b>, T,K, O)>,
+    pub _phantom: PhantomData<(Cursor<'b>, T,K, O,C)>,
 }
 
 
-impl<'a, INNER, OUT, T, K, O> Combinator<'a, T, syn::Error, K, O> for Inside<'a, INNER, OUT, T, K, O>
+impl<'a, INNER, OUT, T, K, O, C> Combinator<'a, T, syn::Error, K, O,C> for Inside<'a, INNER, OUT, T, K, O, C>
 where
-    OUT: Combinator<'a, Cursor<'a>, syn::Error, K, O>,
-    INNER: Combinator<'a, T, syn::Error, K, O>,
-    O: Clone,
+    OUT: Combinator<'a, Cursor<'a>, syn::Error, K, O,C>,
+    INNER: Combinator<'a, T, syn::Error, K, O,C>,
+    O: Clone, 
+    C: Cache<'a, O, syn::Error, K>
 {
     fn parse(
         &self,
         input: Cursor<'a>,
-        cache: &mut impl Cache<'a, O, syn::Error, K>,
+        cache: &mut C,
     ) -> Pakerat<(Cursor<'a>, T)> {
         let (next, inner_result) = self.outside.parse(input, cache)?;
         let (remaining, final_result) = self.inside.parse(inner_result, cache)?;
