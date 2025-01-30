@@ -1,3 +1,4 @@
+use std::error::Error;
 use crate::combinator::{Pakerat,Combinator};
 use crate::cache::Cache;
 use crate::combinator::PakeratError;
@@ -12,20 +13,20 @@ use std::marker::PhantomData;
 /// # Example Usage
 /// ```rust
 /// use proc_macro2::Delimiter;
-/// use syn::buffer::TokenBuffer;
 /// use pakerat_combinators::basic_parsers::{DelParser, IdentParser};
-/// use pakerat_combinators::multi::{Inside};
-/// use pakerat_combinators::cache::BasicCache;
+/// use pakerat_combinators::multi::{Wrapped};
 /// use pakerat_combinators::combinator::Combinator;
+/// use pakerat_combinators::cache::BasicCache;
+/// use syn::buffer::TokenBuffer;
 /// use std::marker::PhantomData;
 /// 
 /// let tokens = "{ my_var }".parse().unwrap();
 /// let buffer = TokenBuffer::new2(tokens);
 ///
 ///
-/// let my_parser = Inside {
-///     outside: DelParser(Delimiter::Brace),
-///     inside: IdentParser,
+/// let my_parser = Wrapped {
+///     wrapper: DelParser(Delimiter::Brace),
+///     inner: IdentParser,
 ///     _phantom: PhantomData,
 /// };
 ///
@@ -33,25 +34,25 @@ use std::marker::PhantomData;
 /// let (_, parsed_ident) = my_parser.parse(buffer.begin(), &mut cache).unwrap();
 /// assert_eq!(parsed_ident.to_string(), "my_var");
 /// ```
-pub struct Inside<'b, INNER,OUT,T, K, O, C>
+pub struct Wrapped<'b, INNER,WRAPPER,T, K, O, C>
 where
     INNER: Combinator<'b, T, syn::Error, K, O,C>,
-    OUT: Combinator<'b, Cursor<'b>, syn::Error, K, O,C>,
+    WRAPPER: Combinator<'b, Cursor<'b>, syn::Error, K, O,C>,
     O: Clone, 
     C: Cache<'b, O, syn::Error, K>
 {	
 	///finds the start for the inside parser
-    pub outside: OUT,
+    pub wrapper: WRAPPER,
     ///main parser that returns the final output
-    pub inside: INNER,
+    pub inner: INNER,
     ///used so we can have generics
     pub _phantom: PhantomData<(Cursor<'b>, T,K, O,C)>,
 }
 
 
-impl<'a, INNER, OUT, T, K, O, C> Combinator<'a, T, syn::Error, K, O,C> for Inside<'a, INNER, OUT, T, K, O, C>
+impl<'a, INNER, WRAPPER, T, K, O, C> Combinator<'a, T, syn::Error, K, O,C> for Wrapped<'a, INNER, WRAPPER, T, K, O, C>
 where
-    OUT: Combinator<'a, Cursor<'a>, syn::Error, K, O,C>,
+    WRAPPER: Combinator<'a, Cursor<'a>, syn::Error, K, O,C>,
     INNER: Combinator<'a, T, syn::Error, K, O,C>,
     O: Clone, 
     C: Cache<'a, O, syn::Error, K>
@@ -61,8 +62,8 @@ where
         input: Cursor<'a>,
         cache: &mut C,
     ) -> Pakerat<(Cursor<'a>, T)> {
-        let (next, inner_result) = self.outside.parse(input, cache)?;
-        let (remaining, final_result) = self.inside.parse(inner_result, cache)?;
+        let (next, inner_result) = self.wrapper.parse(input, cache)?;
+        let (remaining, final_result) = self.inner.parse(inner_result, cache)?;
 
         if !remaining.eof() {
         	return Err(PakeratError::Regular(syn::Error::new(
@@ -74,6 +75,184 @@ where
     }
 }
 
+/// This struct attempts to parse an optional occurrence of an inner parser.
+/// If the inner parser fails with a `Regular` error, `Maybe` will return `None` instead of failing.
+/// If the inner parser fails with a `Recursive` error, the error is propagated.
+///
+/// # Example Usage
+/// ```rust
+/// use pakerat_combinators::multi::Maybe;
+/// use pakerat_combinators::combinator::Combinator;
+/// use pakerat_combinators::basic_parsers::IdentParser;
+/// use pakerat_combinators::cache::BasicCache;
+/// use syn::buffer::TokenBuffer;
+/// use std::marker::PhantomData;
+///
+/// let tokens = "optional_var".parse().unwrap();
+/// let buffer = TokenBuffer::new2(tokens);
+///
+/// let my_parser = Maybe {
+///     inner: IdentParser,
+///     _phantom: PhantomData,
+/// };
+///
+/// let mut cache = BasicCache::<0>::new();
+/// let (_, parsed_ident) = my_parser.parse(buffer.begin(), &mut cache).unwrap();
+/// assert_eq!(parsed_ident.unwrap().to_string(), "optional_var");
+/// ```
+pub struct Maybe<'b, INNER,T,E :Error + Clone, K, O, C>
+where
+    INNER: Combinator<'b, T, E , K, O,C>,
+    O: Clone, 
+    C: Cache<'b, O, E, K>
+{   
+    pub inner: INNER,
+    ///used so we can have generics
+    pub _phantom: PhantomData<(Cursor<'b>, T,E,K, O,C)>,
+}
+
+impl<'a, INNER,T,E, K, O, C> Combinator<'a, Option<T>, E, K, O,C> for Maybe<'a, INNER,T,E, K, O, C> 
+    where O: Clone, 
+    E :Error + Clone,
+    C: Cache<'a, O, E, K>,
+    INNER: Combinator<'a, T, E, K, O,C>,
+{
+
+fn parse(&self, input: Cursor<'a>, cache: &mut C) -> Pakerat<(Cursor<'a>, Option<T>), E> { 
+    match self.inner.parse(input,cache){
+        Ok((cursor,x)) => Ok((cursor,Some(x))),
+        Err(e) => match e {
+            PakeratError::Regular(_) => Ok((input,None)),
+            PakeratError::Recursive(_) => Err(e)
+        }
+    }
+}
+}
+
+/// This struct parses zero or more occurrences of an inner parser.
+/// It keeps collecting results until the inner parser fails with a `Regular` error.
+/// If the inner parser fails with a `Recursive` error, the error is propagated.
+///
+/// # Example Usage
+/// ```rust
+/// use pakerat_combinators::multi::Many0;
+/// use pakerat_combinators::combinator::Combinator;
+/// use pakerat_combinators::basic_parsers::IdentParser;
+/// use pakerat_combinators::cache::BasicCache;
+/// use syn::buffer::TokenBuffer;
+/// use std::marker::PhantomData;
+///
+/// let tokens = "var1 var2 var3".parse().unwrap();
+/// let buffer = TokenBuffer::new2(tokens);
+///
+/// let my_parser = Many0 {
+///     inner: IdentParser,
+///     _phantom: PhantomData,
+/// };
+///
+/// let mut cache = BasicCache::<0>::new();
+/// let (_, parsed_idents) = my_parser.parse(buffer.begin(), &mut cache).unwrap();
+/// assert_eq!(parsed_idents.len(), 3);
+/// ```
+pub struct Many0<'b, INNER,T,E :Error + Clone, K, O, C>
+where
+    INNER: Combinator<'b, T, E , K, O,C>,
+    O: Clone, 
+    C: Cache<'b, O, E, K>
+{   
+    pub inner: INNER,
+    ///used so we can have generics
+    pub _phantom: PhantomData<(Cursor<'b>, T,E,K, O,C)>,
+}
+
+impl<'a, INNER,T,E, K, O, C> Combinator<'a, Vec<T>, E, K, O,C> for Many0<'a, INNER,T,E, K, O, C> 
+    where O: Clone, 
+    E :Error + Clone,
+    C: Cache<'a, O, E, K>,
+    INNER: Combinator<'a, T, E, K, O,C>,
+{
+
+fn parse(&self, mut input: Cursor<'a>, cache: &mut C) -> Pakerat<(Cursor<'a>, Vec<T>), E> { 
+    let mut vec = Vec::new();
+    loop{
+        match self.inner.parse(input,cache){
+            Ok((cursor,x)) => {
+                input=cursor;
+                vec.push(x);
+            },
+            Err(e) => return match e{
+                PakeratError::Regular(_)=> Ok((input,vec)),
+                PakeratError::Recursive(_)=>Err(e)
+            }
+        }
+    }
+}
+}
+
+
+/// This struct parses one or more occurrences of an inner parser.
+/// It behaves like `Many0` but ensures at least one successful parse before stopping.
+/// If the first attempt fails, `Many1` returns an error.
+///
+/// # Example Usage
+/// ```rust
+/// use pakerat_combinators::multi::Many1;
+/// use pakerat_combinators::combinator::Combinator;
+/// use pakerat_combinators::basic_parsers::IdentParser;
+/// use pakerat_combinators::cache::BasicCache;
+/// use syn::buffer::TokenBuffer;
+/// use std::marker::PhantomData;
+///
+/// let tokens = "var1 var2 var3".parse().unwrap();
+/// let buffer = TokenBuffer::new2(tokens);
+///
+/// let my_parser = Many1 {
+///     inner: IdentParser,
+///     _phantom: PhantomData,
+/// };
+///
+/// let mut cache = BasicCache::<0>::new();
+/// let (_, parsed_idents) = my_parser.parse(buffer.begin(), &mut cache).unwrap();
+/// assert_eq!(parsed_idents.len(), 3);
+/// ```
+pub struct Many1<'b, INNER,T,E :Error + Clone, K, O, C>
+where
+    INNER: Combinator<'b, T, E , K, O,C>,
+    O: Clone, 
+    C: Cache<'b, O, E, K>
+{   
+    pub inner: INNER,
+    ///used so we can have generics
+    pub _phantom: PhantomData<(Cursor<'b>, T,E,K, O,C)>,
+}
+
+impl<'a, INNER,T,E, K, O, C> Combinator<'a, Vec<T>, E, K, O,C> for Many1<'a, INNER,T,E, K, O, C> 
+    where O: Clone, 
+    E :Error + Clone,
+    C: Cache<'a, O, E, K>,
+    INNER: Combinator<'a, T, E, K, O,C>,
+{
+
+fn parse(&self, input: Cursor<'a>, cache: &mut C) -> Pakerat<(Cursor<'a>, Vec<T>), E> { 
+    let (mut input,first) = self.inner.parse(input,cache)?;
+    let mut vec = vec![first];
+    loop{
+        match self.inner.parse(input,cache){
+            Ok((cursor,x)) => {
+                input=cursor;
+                vec.push(x);
+            },
+            Err(e) => return match e{
+                PakeratError::Regular(_)=> Ok((input,vec)),
+                PakeratError::Recursive(_)=>Err(e)
+            }
+        }
+    }
+}
+}
+
+
+
 
 #[cfg(test)]
 mod tests {
@@ -81,7 +260,6 @@ mod tests {
 use proc_macro2::TokenStream;
 use syn::buffer::TokenBuffer;
 use super::*;
-use crate::basic_parsers::MatchParser;
 use crate::basic_parsers::LiteralParser;
 use crate::basic_parsers::AnyDelParser;
 use crate::basic_parsers::PunctParser;
@@ -103,29 +281,67 @@ macro_rules! token_cursor {
     };
 }
 
+#[test]
+fn test_maybe_parser() {
+    token_cursor!(buffer, "maybe_var");
+    let parser = Maybe { inner: IdentParser, _phantom: PhantomData };
+    let mut cache = BasicCache::<0>::new();
+    let (_, result) = parser.parse(buffer, &mut cache).unwrap();
+    assert_eq!(result.unwrap().to_string(), "maybe_var");
+}
+
+#[test]
+fn test_maybe_parser_none() {
+    token_cursor!(buffer, "123");
+    let parser = Maybe { inner: IdentParser, _phantom: PhantomData };
+    let mut cache = BasicCache::<0>::new();
+    let (_, result) = parser.parse(buffer, &mut cache).unwrap();
+    assert!(result.is_none());
+}
+
+#[test]
+fn test_many0_parser() {
+    token_cursor!(buffer, "var1 var2 var3");
+    let parser = Many0 { inner: IdentParser, _phantom: PhantomData };
+    let mut cache = BasicCache::<0>::new();
+    let (_, result) = parser.parse(buffer, &mut cache).unwrap();
+    assert_eq!(result.len(), 3);
+}
+
+#[test]
+fn test_many1_parser() {
+    token_cursor!(buffer, "var1 var2 var3");
+    let parser = Many1 { inner: IdentParser, _phantom: PhantomData };
+    let mut cache = BasicCache::<0>::new();
+    let (_, result) = parser.parse(buffer, &mut cache).unwrap();
+    assert_eq!(result.len(), 3);
+}
+
+#[test]
+fn test_many1_parser_fail() {
+    token_cursor!(buffer, "");
+    let parser = Many1 { inner: IdentParser, _phantom: PhantomData };
+    let mut cache = BasicCache::<0>::new();
+    let result = parser.parse(buffer, &mut cache);
+    assert!(result.is_err());
+}
 
 #[test]
     fn test_inside_delimited_ident() {
         // Create token cursor from `{ my_var }`
         token_cursor!(buffer, "{ my_var }");
 
-        // Outer parser: DelParser for `{}` blocks
-        let del_parser = DelParser(Delimiter::Brace);
-
-        // Inside parser: IdentParser
-        let ident_parser = IdentParser;
-
-        // Combine them in Inside
-        let inside_parser = Inside {
-            outside: del_parser,
-            inside: ident_parser,
+        // Combine them in Wrapped
+        let inside_parser = Wrapped {
+            wrapper: DelParser(Delimiter::Brace),
+            inner: IdentParser,
             _phantom: PhantomData,
         };
 
         let mut cache: BasicCache<0> = HashMap::new();
         let result = inside_parser.parse(buffer, &mut cache);
 
-        assert!(result.is_ok(), "Inside parser should successfully parse an identifier inside `{{}}`");
+        assert!(result.is_ok(), "Wrapped parser should successfully parse an identifier inside `{{}}`");
         let (remaining, parsed_ident) = result.unwrap();
         assert_eq!(parsed_ident.to_string(), "my_var", "Parsed identifier should be 'my_var'");
         assert!(remaining.eof(), "Remaining cursor should be empty");
@@ -135,19 +351,16 @@ macro_rules! token_cursor {
     fn test_inside_delimited_punct() {
         token_cursor!(buffer, "( + )");
 
-        let del_parser = DelParser(Delimiter::Parenthesis);
-        let punct_parser = PunctParser;
-
-        let inside_parser = Inside {
-            outside: del_parser,
-            inside: punct_parser,
+        let inside_parser = Wrapped {
+            wrapper: DelParser(Delimiter::Parenthesis),
+            inner: PunctParser,
             _phantom: PhantomData,
         };
 
         let mut cache: BasicCache<0> = HashMap::new();
         let result = inside_parser.parse(buffer, &mut cache);
 
-        assert!(result.is_ok(), "Inside parser should successfully parse a punctuation inside `()`");
+        assert!(result.is_ok(), "Wrapped parser should successfully parse a punctuation inside `()`");
         let (remaining, parsed_punct) = result.unwrap();
         assert_eq!(parsed_punct.as_char(), '+', "Parsed punctuation should be `+`");
         assert!(remaining.eof(), "Remaining cursor should be empty");
@@ -157,19 +370,16 @@ macro_rules! token_cursor {
     fn test_inside_any_delimiter_literal() {
         token_cursor!(buffer, "[ \"Hello\" ]");
 
-        let any_del_parser = AnyDelParser;
-        let literal_parser = LiteralParser;
-
-        let inside_parser = Inside {
-            outside: any_del_parser,
-            inside: literal_parser,
+        let inside_parser = Wrapped {
+            wrapper: AnyDelParser,
+            inner: LiteralParser,
             _phantom: PhantomData,
         };
 
         let mut cache: BasicCache<0> = HashMap::new();
         let result = inside_parser.parse(buffer, &mut cache);
 
-        assert!(result.is_ok(), "Inside parser should successfully parse a literal inside any delimiter");
+        assert!(result.is_ok(), "Wrapped parser should successfully parse a literal inside any delimiter");
         let (remaining, parsed_literal) = result.unwrap();
         assert_eq!(parsed_literal.to_string(), "\"Hello\"", "Parsed literal should be '\"Hello\"'");
         assert!(remaining.eof(), "Remaining cursor should be empty");
@@ -179,84 +389,49 @@ macro_rules! token_cursor {
     fn test_inside_fail_no_delimiter() {
         token_cursor!(buffer, "my_var");
 
-        let del_parser = DelParser(Delimiter::Brace);
-        let ident_parser = IdentParser;
-
-        let inside_parser = Inside {
-            outside: del_parser,
-            inside: ident_parser,
+        let inside_parser = Wrapped {
+            wrapper: DelParser(Delimiter::Brace),
+            inner: IdentParser,
             _phantom: PhantomData,
         };
 
         let mut cache: BasicCache<0> = HashMap::new();
         let result = inside_parser.parse(buffer, &mut cache);
 
-        assert!(result.is_err(), "Inside parser should fail when no `{{}}` is present");
+        assert!(result.is_err(), "Wrapped parser should fail when no `{{}}` is present");
     }
 
     #[test]
     fn test_inside_fail_wrong_inner_type() {
         token_cursor!(buffer, "{ 123 }");
 
-        let del_parser = DelParser(Delimiter::Brace);
-        let ident_parser = IdentParser;
-
-        let inside_parser = Inside {
-            outside: del_parser,
-            inside: ident_parser,
+        let inside_parser = Wrapped {
+            wrapper: DelParser(Delimiter::Brace),
+            inner: IdentParser,
             _phantom: PhantomData,
         };
 
         let mut cache: BasicCache<0> = HashMap::new();
         let result = inside_parser.parse(buffer, &mut cache);
 
-        assert!(result.is_err(), "Inside parser should fail when `{{}}` contains a number instead of an identifier");
+        assert!(result.is_err(), "Wrapped parser should fail when `{{}}` contains a number instead of an identifier");
     }
 
     #[test]
     fn test_inside_fail_extra_tokens() {
         token_cursor!(buffer, "{ my_var extra }");
 
-        let del_parser = DelParser(Delimiter::Brace);
-        let ident_parser = IdentParser;
-
-        let inside_parser = Inside {
-            outside: del_parser,
-            inside: ident_parser,
+        let inside_parser = Wrapped {
+            wrapper: DelParser(Delimiter::Brace),
+            inner: IdentParser,
             _phantom: PhantomData,
         };
 
         let mut cache: BasicCache<0> = HashMap::new();
         let result = inside_parser.parse(buffer, &mut cache);
 
-        assert!(result.is_err(), "Inside parser should fail when extra tokens exist inside `{{}}`");
+        assert!(result.is_err(), "Wrapped parser should fail when extra tokens exist inside `{{}}`");
     }
 
-    #[test]
-    fn test_inside_match_parser() {
-        token_cursor!(buffer, "let x = 42; let y = 10;");
 
-        let start = buffer;
-        let mut cursor = buffer;
-
-        for _ in 0..3 {
-            if let Some((_, next_cursor)) = cursor.token_tree() {
-                cursor = next_cursor;
-            } else {
-                panic!("Failed to advance cursor within the same buffer.");
-            }
-        }
-
-        let end = cursor;
-
-        let parser = MatchParser { start, end };
-
-        let mut cache: BasicCache<0> = HashMap::new();
-        let (remaining, _) = parser.parse(buffer, &mut cache).unwrap();
-
-        assert!(
-            remaining == end,
-            "Expected the remaining cursor to be at `end`, but it was somewhere else."
-        );
-    }
 }
