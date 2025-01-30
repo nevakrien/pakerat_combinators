@@ -201,6 +201,19 @@ fn parse(&self, mut input: Cursor<'a>, cache: &mut C) -> Pakerat<(Cursor<'a>, Ve
         }
     }
 }
+fn parse_ignore(&self, mut input: Cursor<'a>, cache: &mut C) -> Pakerat<Cursor<'a>, E> { 
+    loop{
+        match self.inner.parse(input,cache){
+            Ok((cursor,_x)) => {
+                input=cursor;
+            },
+            Err(e) => return match e{
+                PakeratError::Regular(_)=> Ok(input),
+                PakeratError::Recursive(_)=>Err(e)
+            }
+        }
+    }
+}
 }
 
 impl<'b, INNER,T,E, K, O, C> Many0<'b, INNER,T,E, K, O, C> 
@@ -272,6 +285,20 @@ fn parse(&self, input: Cursor<'a>, cache: &mut C) -> Pakerat<(Cursor<'a>, Vec<T>
             },
             Err(e) => return match e{
                 PakeratError::Regular(_)=> Ok((input,vec)),
+                PakeratError::Recursive(_)=>Err(e)
+            }
+        }
+    }
+}
+fn parse_ignore(&self, input: Cursor<'a>, cache: &mut C) -> Pakerat<Cursor<'a>, E> { 
+    let (mut input,_first) = self.inner.parse(input,cache)?;
+    loop{
+        match self.inner.parse(input,cache){
+            Ok((cursor,_x)) => {
+                input=cursor;
+            },
+            Err(e) => return match e{
+                PakeratError::Regular(_)=> Ok(input),
                 PakeratError::Recursive(_)=>Err(e)
             }
         }
@@ -356,6 +383,7 @@ where
         }
     }
 }
+
 
 
 #[cfg(test)]

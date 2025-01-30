@@ -1,5 +1,7 @@
 
 
+
+
 use std::ops::Deref;
 use std::marker::PhantomData;
 use crate::cache::FlexibleCache;
@@ -47,6 +49,8 @@ impl<E: Error + std::clone::Clone> PakeratError<E>{
     }
 
 }
+///result type used for internal cache managment
+pub type Pakerat<T,E = syn::Error> = Result<T,PakeratError<E>>;
 
 #[derive(Debug,Clone,Copy)]
 pub struct DumbyError;
@@ -78,8 +82,7 @@ fn eq(&self, other: &PakeratError<E>) -> bool {
 }
 }
 
-///result type used for internal cache managment
-pub type Pakerat<T,E = syn::Error> = Result<T,PakeratError<E>>;
+
 
 pub trait Combinator<'a, T = (), E:Clone+Error = syn::Error, K =usize, O: Clone = T, C: Cache<'a, O , E, K> = FlexibleCache<'a,K,T,E>> {
     fn parse(&self, input: Cursor<'a>, state: &mut C) -> Pakerat<(Cursor<'a>, T), E>;
@@ -89,28 +92,8 @@ pub trait Combinator<'a, T = (), E:Clone+Error = syn::Error, K =usize, O: Clone 
     }
 }
 
-
-// impl<'b, T, E, K, O, C, P> Combinator<'b, T, E, K, O, C> for P
-// where
-//     P: Deref<Target = dyn Combinator<'b, T, E, K, O, C>>,
-//     O: Clone,
-//     E: Error + Clone,
-//     C: Cache<'b, O, E, K>,
-// {
-//     fn parse(
-//         &self,
-//         input: syn::buffer::Cursor<'b>,
-//         cache: &mut C,
-//     ) -> Result<(syn::buffer::Cursor<'b>, T), PakeratError<E>> {
-//         self.deref().parse(input, cache) // Dynamically dispatch to the inner implementation
-//     }
-
-//     fn parse_ignore(&self, input: Cursor<'b>, cache: &mut C) -> Pakerat<Cursor<'b>, E> {
-//         self.deref().parse_ignore(input, cache)
-//     }
-// }
-
-
+//we would ideally not need this but for some reason rust is a bit dense....
+//so we need to implement Combinator for all cases of dyn Combinator because thats just what rust wants
 macro_rules! impl_combinator_for_wrappers {
     ($wrapper:ty) => {
         impl<'b, T, E, K, O, C> Combinator<'b, T, E, K, O, C> for $wrapper
@@ -148,7 +131,7 @@ impl_combinator_for_wrappers!(Arc<dyn Combinator<'b, T, E, K, O, C>>);
 
 
 
-// Implementing for function-like types that match the expected closure signature.
+// Implementing for function-like types
 impl<'a, F, T, E, K, O, C> Combinator<'a, T, E, K, O, C> for F
 where
     F: Fn(Cursor<'a>, &mut C) -> Pakerat<(Cursor<'a>, T), E>,
@@ -165,7 +148,7 @@ where
 fn test_closures() {
     use crate::multi::Maybe;
 
-    fn example_parser<'a>(input: Cursor<'a>, _state: &mut FlexibleCache<'a, usize, (), syn::Error>) -> Pakerat<(Cursor<'a>, ()), syn::Error> {
+    fn example_parser<'a>(input: Cursor<'a>, _state: &mut FlexibleCache<'a>) -> Pakerat<(Cursor<'a>, ())> {
         Ok((input, ()))
     }
 
@@ -183,19 +166,6 @@ fn test_closures() {
 
 
 
-}
-
-
-#[test]
-fn test_can_dyn_rc(){
-
-    use std::rc::Rc;
-    use crate::basic_parsers::MatchParser;
-
-    let _parser : Rc<dyn Combinator> = Rc::new(
-        
-        MatchParser { start: Cursor::empty(), end: Cursor::empty() }
-    );
 }
 
 

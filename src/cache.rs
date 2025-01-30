@@ -1,3 +1,5 @@
+use std::fmt::Display;
+use std::marker::PhantomData;
 use crate::combinator::Combinator;
 use crate::combinator::Pakerat;
 use crate::combinator::PakeratError;
@@ -265,3 +267,117 @@ where
 }
 
 
+/// A combinator that caches the results of an inner parser, reducing redundant computations.
+///
+/// ## Type Alias Recommendation
+/// Since `CachedComb` has many generics, it's recommended to create a type alias for ease of use.
+/// A good pattern is to define an alias that fits your cache setup:
+///
+/// ```rust
+/// use pakerat_combinators::cache::{CachedComb, FlexibleCache};
+///
+/// type MyCachedParser<'a, P> = CachedComb<'a, P, (), usize, usize, &'static str, FlexibleCache<'a, usize, ()>>;
+/// ```
+///
+/// This alias simplifies usage, assuming you want:
+/// - `usize` as the cache key type.
+/// - A `FlexibleCache` for storing results.
+/// - Error messages stored as `&'static str`.
+///
+/// ## Example Usage
+/// Below are examples of using `CachedComb` with `UsizeCachedComb` and `FixedCachedComb`.
+///
+/// ### Using `UsizeCachedComb`
+/// ```rust
+/// use pakerat_combinators::combinator::Combinator;
+/// use pakerat_combinators::basic_parsers::IdentParser;
+/// use pakerat_combinators::cache::{CachedComb, FlexibleCache,UsizeCachedComb};
+/// use syn::buffer::{TokenBuffer,Cursor};
+///
+///
+/// let tokens = "cached_var".parse().unwrap();
+/// let buffer = TokenBuffer::new2(tokens);
+///
+/// let my_parser = UsizeCachedComb::new(IdentParser, 0, "Cache miss error");
+///
+/// let mut cache = FlexibleCache::<usize, _>::default();
+/// let (_, parsed_ident) = my_parser.parse(buffer.begin(), &mut cache).unwrap();
+///
+/// assert_eq!(parsed_ident.to_string(), "cached_var");
+///
+/// // Parsing again should retrieve from the cache (even if the input is diffrent)
+/// let (_, cached_ident) = my_parser.parse(Cursor::empty(), &mut cache).unwrap();
+/// assert_eq!(cached_ident.to_string(), "cached_var");
+/// ```
+///
+/// ### Using `FixedCachedComb` with `ArrayCache`
+/// ```rust
+/// use pakerat_combinators::combinator::Combinator;
+/// use pakerat_combinators::basic_parsers::IdentParser;
+/// use pakerat_combinators::cache::{CachedComb, BasicCache,FixedCachedComb};
+/// use syn::buffer::{TokenBuffer,Cursor};
+/// use proc_macro2::Ident;
+///
+///
+/// let tokens = "fixed_cached_var".parse().unwrap();
+/// let buffer = TokenBuffer::new2(tokens);
+///
+/// let my_parser = FixedCachedComb::<8, _,_,_>::new(IdentParser, 0, "Cache miss error");
+///
+/// let mut cache = BasicCache::<8,Ident>::new();
+/// let (_, parsed_ident) = my_parser.parse(buffer.begin(), &mut cache).unwrap();
+///
+/// assert_eq!(parsed_ident.to_string(), "fixed_cached_var");
+///
+/// // Parsing again should retrieve from the cache (even if the input is diffrent)
+/// let (_, cached_ident) = my_parser.parse(Cursor::empty(), &mut cache).unwrap();
+/// assert_eq!(cached_ident.to_string(), "fixed_cached_var");
+/// ```
+pub struct CachedComb<'a, INNER,T =(), K= usize,MYKEY=K,MESSAGE=&'static str, C = FlexibleCache<'a,K,T>>
+where
+    INNER: Combinator<'a, T, syn::Error , K, T,C>,
+    T: Clone,
+    C: Cache<'a, T, syn::Error, K>,
+    MYKEY:Keyble<K> + Copy,
+    MESSAGE:Display
+
+{   
+    pub inner: INNER,
+    ///for complex keys (like  c<str>) this should be a &key and then it would clone when needed.
+    pub key:MYKEY,
+    pub message:MESSAGE,
+
+    ///used so we can have generics
+    pub _phantom: PhantomData<(Cursor<'a>, T,K,C)>,
+}
+
+pub type UsizeCachedComb<'a, INNER,T =(),MESSAGE=&'static str,C = FlexibleCache<'a,usize,T>> = CachedComb<'a,INNER, T , usize,usize,MESSAGE,C>;
+pub type FixedCachedComb<'a,const L: usize, INNER,T =(),MESSAGE=&'static str> = CachedComb<'a,INNER, T , usize,usize,MESSAGE,BasicCache<'a, L,T>>;
+
+impl<'a, INNER,MYKEY,MESSAGE,T, K, C> Combinator<'a, T, syn::Error , K, T,C> for CachedComb <'a,INNER, T , K,MYKEY,MESSAGE,C>
+where  
+	INNER: Combinator<'a, T, syn::Error , K, T,C>,
+    T: Clone,
+    C: Cache<'a, T, syn::Error, K>,
+    MYKEY:Keyble<K> + Copy,
+    MESSAGE:Display
+{
+
+    fn parse(&self, input: Cursor<'a>, cache: &mut C) -> Pakerat<(Cursor<'a>, T)> { 
+    	cache.parse_cached(input,self.key,&self.inner,|| {syn::Error::new(input.span(),self.message.to_string())})
+    }
+}
+
+impl<'a,INNER, T , K,MYKEY,MESSAGE,C> CachedComb<'a,INNER, T , K,MYKEY,MESSAGE,C> 
+
+where
+    INNER: Combinator<'a, T, syn::Error , K, T,C>,
+    T: Clone,
+    C: Cache<'a, T, syn::Error, K>,
+    MYKEY:Keyble<K> + Copy,
+    MESSAGE:Display
+{
+	pub fn new(inner:INNER,key:MYKEY,message:MESSAGE) -> Self{
+		CachedComb{inner,key,message,_phantom:PhantomData}
+	}
+}
