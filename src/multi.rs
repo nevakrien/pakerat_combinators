@@ -1,3 +1,4 @@
+use crate::cache::FlexibleCache;
 use std::error::Error;
 use crate::combinator::{Pakerat,Combinator};
 use crate::cache::Cache;
@@ -34,7 +35,7 @@ use std::marker::PhantomData;
 /// let (_, parsed_ident) = my_parser.parse(buffer.begin(), &mut cache).unwrap();
 /// assert_eq!(parsed_ident.to_string(), "my_var");
 /// ```
-pub struct Wrapped<'b, INNER,WRAPPER,T, K, O, C>
+pub struct Wrapped<'b, INNER,WRAPPER,T =(), K= usize, O=T, C = FlexibleCache<'b,K,T,syn::Error>>
 where
     INNER: Combinator<'b, T, syn::Error, K, O,C>,
     WRAPPER: Combinator<'b, Cursor<'b>, syn::Error, K, O,C>,
@@ -91,19 +92,18 @@ where
 /// let tokens = "optional_var".parse().unwrap();
 /// let buffer = TokenBuffer::new2(tokens);
 ///
-/// let my_parser = Maybe {
-///     inner: IdentParser,
-///     _phantom: PhantomData,
-/// };
+/// let my_parser = Maybe::new(IdentParser);
 ///
 /// let mut cache = BasicCache::<0>::new();
 /// let (_, parsed_ident) = my_parser.parse(buffer.begin(), &mut cache).unwrap();
 /// assert_eq!(parsed_ident.unwrap().to_string(), "optional_var");
 /// ```
-pub struct Maybe<'b, INNER,T,E :Error + Clone, K, O, C>
+//
+pub struct Maybe<'b, INNER,T =(),E=syn::Error, K= usize, O=T, C = FlexibleCache<'b,K,T,E>>
 where
     INNER: Combinator<'b, T, E , K, O,C>,
-    O: Clone, 
+    O: Clone,
+    E :Error + Clone, 
     C: Cache<'b, O, E, K>
 {   
     pub inner: INNER,
@@ -129,6 +129,22 @@ fn parse(&self, input: Cursor<'a>, cache: &mut C) -> Pakerat<(Cursor<'a>, Option
 }
 }
 
+impl<'b, INNER,T,E, K, O, C> Maybe<'b, INNER,T,E, K, O, C> 
+where
+    INNER: Combinator<'b, T, E , K, O,C>,
+    O: Clone, 
+    E :Error + Clone,
+    C: Cache<'b, O, E, K>,
+{
+    
+    pub fn new(inner:INNER) -> Self{
+        Maybe{
+            inner,
+            _phantom:PhantomData
+        }
+    }
+}
+
 /// This struct parses zero or more occurrences of an inner parser.
 /// It keeps collecting results until the inner parser fails with a `Regular` error.
 /// If the inner parser fails with a `Recursive` error, the error is propagated.
@@ -145,19 +161,17 @@ fn parse(&self, input: Cursor<'a>, cache: &mut C) -> Pakerat<(Cursor<'a>, Option
 /// let tokens = "var1 var2 var3".parse().unwrap();
 /// let buffer = TokenBuffer::new2(tokens);
 ///
-/// let my_parser = Many0 {
-///     inner: IdentParser,
-///     _phantom: PhantomData,
-/// };
+/// let my_parser = Many0::new(IdentParser);
 ///
 /// let mut cache = BasicCache::<0>::new();
 /// let (_, parsed_idents) = my_parser.parse(buffer.begin(), &mut cache).unwrap();
 /// assert_eq!(parsed_idents.len(), 3);
 /// ```
-pub struct Many0<'b, INNER,T,E :Error + Clone, K, O, C>
+pub struct Many0<'b, INNER,T =(),E=syn::Error, K= usize, O=T, C = FlexibleCache<'b,K,T,E>>
 where
     INNER: Combinator<'b, T, E , K, O,C>,
     O: Clone, 
+    E:Error + Clone,
     C: Cache<'b, O, E, K>
 {   
     pub inner: INNER,
@@ -189,6 +203,22 @@ fn parse(&self, mut input: Cursor<'a>, cache: &mut C) -> Pakerat<(Cursor<'a>, Ve
 }
 }
 
+impl<'b, INNER,T,E, K, O, C> Many0<'b, INNER,T,E, K, O, C> 
+where
+    INNER: Combinator<'b, T, E , K, O,C>,
+    O: Clone, 
+    E :Error + Clone,
+    C: Cache<'b, O, E, K>,
+{
+    
+    pub fn new(inner:INNER) -> Self{
+        Many0{
+            inner,
+            _phantom:PhantomData
+        }
+    }
+}
+
 
 /// This struct parses one or more occurrences of an inner parser.
 /// It behaves like `Many0` but ensures at least one successful parse before stopping.
@@ -206,19 +236,17 @@ fn parse(&self, mut input: Cursor<'a>, cache: &mut C) -> Pakerat<(Cursor<'a>, Ve
 /// let tokens = "var1 var2 var3".parse().unwrap();
 /// let buffer = TokenBuffer::new2(tokens);
 ///
-/// let my_parser = Many1 {
-///     inner: IdentParser,
-///     _phantom: PhantomData,
-/// };
+/// let my_parser = Many1::new(IdentParser);
 ///
 /// let mut cache = BasicCache::<0>::new();
 /// let (_, parsed_idents) = my_parser.parse(buffer.begin(), &mut cache).unwrap();
 /// assert_eq!(parsed_idents.len(), 3);
 /// ```
-pub struct Many1<'b, INNER,T,E :Error + Clone, K, O, C>
+pub struct Many1<'b, INNER,T =(),E=syn::Error, K= usize, O=T, C = FlexibleCache<'b,K,T,E>>
 where
     INNER: Combinator<'b, T, E , K, O,C>,
     O: Clone, 
+    E:Error + Clone,
     C: Cache<'b, O, E, K>
 {   
     pub inner: INNER,
@@ -251,7 +279,83 @@ fn parse(&self, input: Cursor<'a>, cache: &mut C) -> Pakerat<(Cursor<'a>, Vec<T>
 }
 }
 
+impl<'b, INNER,T,E, K, O, C> Many1<'b, INNER,T,E, K, O, C> 
+where
+    INNER: Combinator<'b, T, E , K, O,C>,
+    O: Clone, 
+    E :Error + Clone,
+    C: Cache<'b, O, E, K>,
+{
+    
+    pub fn new(inner:INNER) -> Self{
+        Many1{
+            inner,
+            _phantom:PhantomData
+        }
+    }
+}
 
+/// This struct parses zero or more occurrences of an inner parser.
+/// It keeps collecting results until the inner parser fails with a `Regular` error.
+/// If the inner parser fails with a `Recursive` error, the error is propagated.
+///
+/// # Example Usage
+/// ```rust
+/// use pakerat_combinators::multi::Ignore;
+/// use pakerat_combinators::combinator::Combinator;
+/// use pakerat_combinators::basic_parsers::IdentParser;
+/// use pakerat_combinators::cache::BasicCache;
+/// use syn::buffer::TokenBuffer;
+/// use std::marker::PhantomData;
+///
+/// let tokens = "optional_var".parse().unwrap();
+/// let buffer = TokenBuffer::new2(tokens);
+///
+/// let my_parser = Ignore::new(IdentParser);
+///
+/// let mut cache = BasicCache::<0>::new();
+/// let (_cursor, ()) = my_parser.parse(buffer.begin(), &mut cache).unwrap();
+/// ```
+pub struct Ignore<'b, INNER,T =(),E=syn::Error, K= usize, O=T, C = FlexibleCache<'b,K,T,E>>
+where
+    INNER: Combinator<'b, T, E , K, O,C>,
+    O: Clone, 
+    E:Error + Clone,
+    C: Cache<'b, O, E, K>
+{   
+    pub inner: INNER,
+    ///used so we can have generics
+    pub _phantom: PhantomData<(Cursor<'b>, T,E,K, O,C)>,
+}
+
+impl<'a, INNER,T,E, K, O, C> Combinator<'a, (), E, K, O,C> for Ignore<'a, INNER,T,E, K, O, C> 
+    where O: Clone, 
+    E :Error + Clone,
+    C: Cache<'a, O, E, K>,
+    INNER: Combinator<'a, T, E, K, O,C>,
+{
+
+fn parse(&self, input: Cursor<'a>, cache: &mut C) -> Pakerat<(Cursor<'a>, ()), E> { 
+    let c = self.inner.parse_ignore(input,cache)?;
+    Ok((c,()))
+}
+}
+
+impl<'b, INNER,T,E, K, O, C> Ignore<'b, INNER,T,E, K, O, C> 
+where
+    INNER: Combinator<'b, T, E , K, O,C>,
+    O: Clone, 
+    E :Error + Clone,
+    C: Cache<'b, O, E, K>,
+{
+    
+    pub fn new(inner:INNER) -> Self{
+        Ignore{
+            inner,
+            _phantom:PhantomData
+        }
+    }
+}
 
 
 #[cfg(test)]
@@ -280,6 +384,25 @@ macro_rules! token_cursor {
         let $name = buffer.begin(); // Extract cursor
     };
 }
+
+#[test]
+fn test_lifetimes() {
+    let parser : Maybe<'static,_>= Maybe::new(Ignore::new(Maybe::new(IdentParser)));
+
+    {
+        token_cursor!(buffer, "maybe_var");
+        let mut cache = FlexibleCache::new();
+        let (_, _result) = parser.parse(buffer, &mut cache).unwrap();
+    }
+
+    {
+        token_cursor!(buffer, "maybe_var");
+        let mut cache = FlexibleCache::new();
+        let (_, _result) = parser.parse(buffer, &mut cache).unwrap();
+    }
+}
+
+
 
 #[test]
 fn test_maybe_parser() {
