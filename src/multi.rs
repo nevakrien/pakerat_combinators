@@ -74,6 +74,23 @@ where
 
         Ok((next, final_result))
     }
+
+    fn parse_ignore(
+        &self,
+        input: Cursor<'a>,
+        cache: &mut C,
+    ) -> Pakerat<Cursor<'a>> {
+        let (next, inner_result) = self.wrapper.parse(input, cache)?;
+        let remaining= self.inner.parse_ignore(inner_result, cache)?;
+
+        if !remaining.eof() {
+            return Err(PakeratError::Regular(syn::Error::new(
+                remaining.span(),"expected one of '})]' or EOF"
+                )))
+        }
+
+        Ok(next)
+    }
 }
 
 /// This struct attempts to parse an optional occurrence of an inner parser.
@@ -123,6 +140,15 @@ fn parse(&self, input: Cursor<'a>, cache: &mut C) -> Pakerat<(Cursor<'a>, Option
         Ok((cursor,x)) => Ok((cursor,Some(x))),
         Err(e) => match e {
             PakeratError::Regular(_) => Ok((input,None)),
+            PakeratError::Recursive(_) => Err(e)
+        }
+    }
+}
+fn parse_ignore(&self, input: Cursor<'a>, cache: &mut C) -> Pakerat<Cursor<'a>, E> { 
+    match self.inner.parse_ignore(input,cache){
+        Ok(cursor) => Ok(cursor),
+        Err(e) => match e {
+            PakeratError::Regular(_) => Ok(input),
             PakeratError::Recursive(_) => Err(e)
         }
     }

@@ -1,8 +1,3 @@
-
-
-
-
-use std::ops::Deref;
 use std::marker::PhantomData;
 use crate::cache::FlexibleCache;
 use std::fmt;
@@ -163,9 +158,50 @@ fn test_closures() {
         inner:dumby2,
         _phantom:PhantomData
     };
+}
 
 
+#[test]
+fn test_dyn_closure_combinator_error_mapping() {
+    use syn::buffer::TokenBuffer;
 
+    // A simple parser that always fails with a Regular error
+    fn failing_parser<'a>(input: Cursor<'a>, _state: &mut FlexibleCache<'a>) -> Pakerat<(Cursor<'a>, ())> {
+        Err(PakeratError::Regular(syn::Error::new(input.span(), "Inner parser error")))
+    }
+
+    // Create token buffer first so its dropped last
+    let tokens = "test".parse().unwrap();
+    let buffer = TokenBuffer::new2(tokens);
+
+    // make a closure that wraps `failing_parser`(we need a helper function so that the lifetimes work like we want)
+    fn make_combinator<'b>() ->  Box<dyn Combinator<'b, (), syn::Error, usize, (), FlexibleCache<'b,  usize, ()>>>{
+        Box::new(move  |input: Cursor<'b>, cache: &mut FlexibleCache<'b, usize, ()>| {
+            failing_parser(input, cache).map_err(move |e| {
+                e.map(|inner| {
+                    let mut err = syn::Error::new(inner.span(),"failed doing something");
+                    err.combine(inner);
+                    err
+                })
+            }) 
+        })
+    }
+
+    let error_mapping_combinator = make_combinator();
+
+
+    let mut cache = FlexibleCache::<usize, ()>::default();
+    {
+        // Run the parser
+        let result = error_mapping_combinator.parse(buffer.begin(), &mut cache);
+
+        // Verify that the error was transformed
+        if let Err(PakeratError::Regular(e)) = result {
+            assert!(e.to_string().contains("failed doing something"));
+        } else {
+            panic!("Expected an error but got a successful parse");
+        }
+    }
 }
 
 
