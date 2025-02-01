@@ -3,46 +3,25 @@ use std::marker::PhantomData;
 use crate::combinator::Combinator;
 use crate::combinator::Pakerat;
 use crate::combinator::PakeratError;
-use std::error::Error;
 use syn::buffer::Cursor;
 use std::ops::IndexMut;
 use std::ops::Index;
 use std::fmt::Debug;
 use std::collections::HashMap;
-use std::hash::Hash;
-
-pub trait Keyble<K  = usize>{
-	fn get_key(self) -> K;
-}
-
-impl<K:Clone> Keyble<K> for K{
-	#[inline]
-	fn get_key(self) -> K{
-		self
-	}
-}
-
-impl<K:Clone> Keyble<K> for &K{
-	#[inline(always)]
-	fn get_key(self) -> K{
-		(*self).clone()
-	}
-}
-
 
 
 ///a basic collection type for modifible maps
-pub trait Collection< T  = (),K  =usize>{
+pub trait Collection< T  = ()>{
 	///this should only return null when an error message is about to be printed
-	fn get(&mut self,key:impl Keyble<K>) -> Option<&mut T>;
+	fn get(&mut self,key:usize) -> Option<&mut T>;
 }
 
 #[repr(transparent)]
 #[derive(Debug,Clone,PartialEq,Eq)]
 pub struct FixedCollection<T  ,const L: usize >(pub [T;L]);
-impl<T ,const L: usize > Collection<T,usize> for FixedCollection<T,L>{
-	fn get(&mut self, key: impl Keyble<usize>) -> Option<&mut T>  {
-		self.0.get_mut(key.get_key())
+impl<T ,const L: usize > Collection<T> for FixedCollection<T,L>{
+	fn get(&mut self, key: usize) -> Option<&mut T>  {
+		self.0.get_mut(key)
 	}
 }
 
@@ -54,18 +33,17 @@ impl<T: Default, const L: usize> Default for FixedCollection<T, L> {
 
 #[repr(transparent)]
 #[derive(Debug,Clone,PartialEq,Eq)]
-pub struct HashCollection<K : Hash+Eq,T>(pub HashMap<K,T>);
-impl<T,K : Hash+Eq> Collection<T,K> for HashCollection<K,T>{
-	fn get(&mut self, key: impl Keyble<K>) -> Option<&mut T>  {
-		self.0.get_mut(&key.get_key())
+pub struct HashCollection<T>(pub HashMap<usize,T>);
+impl<T> Collection<T> for HashCollection<T>{
+	fn get(&mut self, key: usize) -> Option<&mut T>  {
+		self.0.get_mut(&key)
 	}
 }
 
-#[test]fn hashes() {
-use syn::buffer::Cursor;
-
-	let mut map: HashCollection<&str,Cursor> = HashCollection(HashMap::new());
-	map.get("hi");
+#[test]
+fn hashes() {
+	let mut map: HashCollection<Cursor> = HashCollection(HashMap::new());
+	map.get(2);
 }
 
 #[derive(Default)]
@@ -108,17 +86,16 @@ impl<T: PartialEq> PartialEq for CacheStatus<T> {
 }
 
 impl<T: Eq> Eq for CacheStatus<T> {}
-pub type CacheEntry<'a,T = (),E  = syn::Error> = CacheStatus<Pakerat<(Cursor<'a>,T),E>>;
+pub type CacheEntry<'a,T = ()> = CacheStatus<Pakerat<(Cursor<'a>,T)>>;
 
-impl<'a, T, E> CacheEntry<'a, T, E>
+impl<'a, T> CacheEntry<'a, T>
 where
     T: Clone,
-    E: Error + Clone,
 {	
 	///this is used to finalize the result of a search
 	///
 	///it will automatically move pending results to full errors and panic on an empty cache
-    pub fn finalize<F: FnOnce() -> E>(&mut self, err_f: F) -> Pakerat<(Cursor<'a>,T), E> {
+    pub fn finalize<F: FnOnce() -> syn::Error>(&mut self, err_f: F) -> Pakerat<(Cursor<'a>,T)> {
         match self {
             CacheStatus::Empty => unreachable!("bad finalize call on an empty cache"),
             CacheStatus::Pending => {
@@ -135,7 +112,7 @@ where
 
 
 
-pub type ArrayCache<'a,const L: usize,T = (),E  = syn::Error> = FixedCollection<CacheEntry<'a,T,E>, L>;
+pub type ArrayCache<'a,const L: usize,T = ()> = FixedCollection<CacheEntry<'a,T>, L>;
 
 #[test]
 fn array_cache() {
@@ -145,45 +122,45 @@ fn array_cache() {
 
 ///a cache that allways returns a value in get
 #[repr(transparent)]
-#[derive(Clone,PartialEq)]
-pub struct HashCache<'a,K : Hash+Eq,T : Clone = (),E : Error + Clone = syn::Error>(pub HashMap<K,CacheEntry<'a,T,E>>);
-impl<'a,T : Clone,E:Error + Clone,K : Hash+Eq> Collection<CacheEntry<'a,T,E>,K> for HashCache<'a,K,T,E>{
+#[derive(Clone)]
+pub struct HashCache<'a,T : Clone = ()>(pub HashMap<usize,CacheEntry<'a,T>>);
+impl<'a,T : Clone> Collection<CacheEntry<'a,T>> for HashCache<'a,T>{
 	#[inline]
-	fn get(&mut self, key: impl Keyble<K>) -> Option<&mut CacheEntry<'a,T,E>>  {
-		Some(self.0.entry(key.get_key()).or_insert(CacheStatus::Empty))
+	fn get(&mut self, key: usize) -> Option<&mut CacheEntry<'a,T>>  {
+		Some(self.0.entry(key).or_insert(CacheStatus::Empty))
 	}
 }
 
 // Implement `Index` for immutable access
-impl<'a, K: Hash + Eq, T:Clone,E:Error+ Clone> Index<K> for HashCache<'a,K, T,E> {
-    type Output = CacheEntry<'a,T,E>;
+impl<'a, T:Clone> Index<usize> for HashCache<'a, T> {
+    type Output = CacheEntry<'a,T>;
 
-    fn index(&self, key: K) -> &Self::Output {
+    fn index(&self, key: usize) -> &Self::Output {
         self.0.get(&key).unwrap_or(&CacheStatus::Empty)
     }
 }
-impl<K: Hash + Eq, T:Clone,E:Error+ Clone> IndexMut<K> for HashCache<'_, K, T, E> {
-    fn index_mut(&mut self, key: K) -> &mut Self::Output {
+impl<T:Clone> IndexMut<usize> for HashCache<'_,T> {
+    fn index_mut(&mut self, key: usize) -> &mut Self::Output {
         self.0.entry(key).or_insert(CacheStatus::Empty)
     }
 }
 
-impl<K :Hash+Eq, T:Clone,E:Error+ Clone> Default for HashCache<'_,K,T,E>{
+impl<T:Clone> Default for HashCache<'_,T>{
 
 fn default() -> Self { HashCache(HashMap::new()) }
 }
 
 #[test]
 fn hash_cache() {
-	let mut map: HashCache<&str,i8> = HashCache::default();
-	assert!(matches!(*map.get("hey").unwrap(),CacheStatus::Empty));
+	let mut map: HashCache<i8> = HashCache::default();
+	assert!(matches!(*map.get(3).unwrap(),CacheStatus::Empty));
 }
 
-pub trait CacheSpot<'a, T:Clone=(), E : Error+Clone= syn::Error, K=usize>: Collection<CacheEntry<'a, T, E>, K> {
+pub trait CacheSpot<'a, T:Clone=()>: Collection<CacheEntry<'a, T>> {
 	fn clear(&mut self);
 }
 
-impl<'a, const L: usize, E : Error+Clone,T:Clone> CacheSpot<'a, T, E, usize> for ArrayCache<'a,L,T,E> 
+impl<'a, const L: usize,T:Clone> CacheSpot<'a, T> for ArrayCache<'a,L,T> 
 {	
 	fn clear(&mut self) {
 		for x in self.0.iter_mut() {
@@ -192,7 +169,7 @@ impl<'a, const L: usize, E : Error+Clone,T:Clone> CacheSpot<'a, T, E, usize> for
 	}
 }
 
-impl<'a, K: Hash + Eq, E : Error+Clone,T:Clone> CacheSpot<'a, T, E, K> for HashCache<'a,K,T,E> 
+impl<'a,T:Clone> CacheSpot<'a, T> for HashCache<'a,T> 
 {	
 	fn clear(&mut self) {
 		self.0 = HashMap::new();
@@ -201,9 +178,9 @@ impl<'a, K: Hash + Eq, E : Error+Clone,T:Clone> CacheSpot<'a, T, E, K> for HashC
 
 
 
-pub trait Cache<'a, T : Clone = (), E: Error + Clone = syn::Error, K = usize> {
+pub trait Cache<'a, T : Clone = ()> {
     /// The type of cache slot stored in the cache
-    type Item: CacheSpot<'a, T, E, K>;
+    type Item: CacheSpot<'a, T>;
 
     /// Retrieves the cache for the byte anotated by slot
     fn get_slot(&mut self, slot: usize) -> &mut Self::Item;
@@ -215,8 +192,8 @@ pub trait Cache<'a, T : Clone = (), E: Error + Clone = syn::Error, K = usize> {
 	///however it will still reject some grammers.
 	///for instance "expr + term => expr" would not work because it causes an infinite left recursive loop. 
 	///but "term + expr => expr" will work
-    fn parse_cached<P,FE>(&mut self,input:Cursor<'a>, key: impl Keyble<K> + Copy ,parser:&P,recurse_err:FE) -> Pakerat<(Cursor<'a>,T), E>
-    where P:Combinator<'a,T, E, K,T,Self> + ?Sized, FE:FnOnce() -> E, Self: Sized
+    fn parse_cached<P,FE>(&mut self,input:Cursor<'a>, key: usize ,parser:&P,recurse_err:FE) -> Pakerat<(Cursor<'a>,T)>
+    where P:Combinator<'a,T,T,Self> + ?Sized, FE:FnOnce() -> syn::Error, Self: Sized
     {	
     	let id = input.span().byte_range().start;
     	let spot = self.get_slot(id).get(key).expect("missing key");
@@ -241,20 +218,20 @@ pub trait Cache<'a, T : Clone = (), E: Error + Clone = syn::Error, K = usize> {
 
 }
 
-impl<'a, T : Clone , E: Error + Clone , K, C > Cache<'a,T,E,K> for HashMap<usize,C> where C : CacheSpot<'a, T, E, K> + Default{
+impl<'a, T : Clone , C > Cache<'a,T> for HashMap<usize,C> where C : CacheSpot<'a, T> + Default{
 	type Item = C;
 	fn get_slot(&mut self, slot: usize) -> &mut C {
 		self.entry(slot).or_default()
 	}
 }
 
-pub type BasicCache<'a,const L: usize,T=(),E=syn::Error>= HashMap<usize, ArrayCache<'a,L, T, E>>;
-pub type FlexibleCache<'a,K = usize,T=(),E=syn::Error>= HashMap<usize, HashCache<'a,K, T, E>>;
+pub type BasicCache<'a,const L: usize,T=()>= HashMap<usize, ArrayCache<'a,L, T>>;
+pub type FlexibleCache<'a,T=()>= HashMap<usize, HashCache<'a, T>>;
 // pub type StrCache<'a,T=(),E=syn::Error>= HashMap<usize, HashCache<'a,&'a str, T, E>>;
 
-impl<'a, T: Clone, E: Error + Clone, K, C> Cache<'a, T, E, K> for Vec<C>
+impl<'a, T: Clone, C> Cache<'a, T> for Vec<C>
 where
-    C: CacheSpot<'a, T, E, K> + Default,
+    C: CacheSpot<'a, T> + Default,
 {
     type Item = C;
 
@@ -276,7 +253,7 @@ where
 /// ```rust
 /// use pakerat_combinators::cache::{CachedComb, FlexibleCache};
 ///
-/// type MyCachedParser<'a, P> = CachedComb<'a, P, (), usize, usize, &'static str, FlexibleCache<'a, usize, ()>>;
+/// type MyCachedParser<'a, P> = CachedComb<'a, P, (), &'static str, FlexibleCache<'a, ()>>;
 /// ```
 ///
 /// This alias simplifies usage, assuming you want:
@@ -300,7 +277,7 @@ where
 ///
 /// let my_parser = UsizeCachedComb::new(IdentParser, 0, "Cache miss error");
 ///
-/// let mut cache = FlexibleCache::<usize, _>::default();
+/// let mut cache = FlexibleCache::<_>::default();
 /// let (_, parsed_ident) = my_parser.parse(buffer.begin(), &mut cache).unwrap();
 ///
 /// assert_eq!(parsed_ident.to_string(), "cached_var");
@@ -333,33 +310,30 @@ where
 /// let (_, cached_ident) = my_parser.parse(Cursor::empty(), &mut cache).unwrap();
 /// assert_eq!(cached_ident.to_string(), "fixed_cached_var");
 /// ```
-pub struct CachedComb<'a, INNER,T =(), K= usize,MYKEY=K,MESSAGE=&'static str, C = FlexibleCache<'a,K,T>>
+pub struct CachedComb<'a, INNER,T =(),MESSAGE=&'static str, C = FlexibleCache<'a,T>>
 where
-    INNER: Combinator<'a, T, syn::Error , K, T,C>,
+    INNER: Combinator<'a, T, T,C>,
     T: Clone,
-    C: Cache<'a, T, syn::Error, K>,
-    MYKEY:Keyble<K> + Copy,
+    C: Cache<'a, T>,
     MESSAGE:Display
 
 {   
     pub inner: INNER,
-    ///for complex keys (like  c<str>) this should be a &key and then it would clone when needed.
-    pub key:MYKEY,
+    pub key:usize,
     pub message:MESSAGE,
 
     ///used so we can have generics
-    pub _phantom: PhantomData<(Cursor<'a>, T,K,C)>,
+    pub _phantom: PhantomData<(Cursor<'a>, T,C)>,
 }
 
-pub type UsizeCachedComb<'a, INNER,T =(),MESSAGE=&'static str,C = FlexibleCache<'a,usize,T>> = CachedComb<'a,INNER, T , usize,usize,MESSAGE,C>;
-pub type FixedCachedComb<'a,const L: usize, INNER,T =(),MESSAGE=&'static str> = CachedComb<'a,INNER, T , usize,usize,MESSAGE,BasicCache<'a, L,T>>;
+pub type UsizeCachedComb<'a, INNER,T =(),MESSAGE=&'static str,C = FlexibleCache<'a,T>> = CachedComb<'a,INNER, T ,MESSAGE,C>;
+pub type FixedCachedComb<'a,const L: usize, INNER,T =(),MESSAGE=&'static str> = CachedComb<'a,INNER, T ,MESSAGE,BasicCache<'a, L,T>>;
 
-impl<'a, INNER,MYKEY,MESSAGE,T, K, C> Combinator<'a, T, syn::Error , K, T,C> for CachedComb <'a,INNER, T , K,MYKEY,MESSAGE,C>
+impl<'a, INNER,MESSAGE,T, C> Combinator<'a, T, T,C> for CachedComb <'a,INNER, T,MESSAGE,C>
 where  
-	INNER: Combinator<'a, T, syn::Error , K, T,C>,
+	INNER: Combinator<'a, T, T,C>,
     T: Clone,
-    C: Cache<'a, T, syn::Error, K>,
-    MYKEY:Keyble<K> + Copy,
+    C: Cache<'a, T>,
     MESSAGE:Display
 {
 
@@ -368,16 +342,15 @@ where
     }
 }
 
-impl<'a,INNER, T , K,MYKEY,MESSAGE,C> CachedComb<'a,INNER, T , K,MYKEY,MESSAGE,C> 
+impl<'a,INNER, T ,MESSAGE,C> CachedComb<'a,INNER, T ,MESSAGE,C> 
 
 where
-    INNER: Combinator<'a, T, syn::Error , K, T,C>,
+    INNER: Combinator<'a, T, T,C>,
     T: Clone,
-    C: Cache<'a, T, syn::Error, K>,
-    MYKEY:Keyble<K> + Copy,
+    C: Cache<'a, T>,
     MESSAGE:Display
 {
-	pub fn new(inner:INNER,key:MYKEY,message:MESSAGE) -> Self{
+	pub fn new(inner:INNER,key:usize,message:MESSAGE) -> Self{
 		CachedComb{inner,key,message,_phantom:PhantomData}
 	}
 }

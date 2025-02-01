@@ -1,5 +1,4 @@
 use crate::cache::FlexibleCache;
-use std::error::Error;
 use crate::combinator::{Pakerat,Combinator};
 use crate::cache::Cache;
 use crate::combinator::PakeratError;
@@ -35,28 +34,28 @@ use std::marker::PhantomData;
 /// let (_, parsed_ident) = my_parser.parse(buffer.begin(), &mut cache).unwrap();
 /// assert_eq!(parsed_ident.to_string(), "my_var");
 /// ```
-pub struct Wrapped<'b, INNER,WRAPPER,T =(), K= usize, O=T, C = FlexibleCache<'b,K,T,syn::Error>>
+pub struct Wrapped<'b, INNER,WRAPPER,T =(), O=T, C = FlexibleCache<'b,T>>
 where
-    INNER: Combinator<'b, T, syn::Error, K, O,C>,
-    WRAPPER: Combinator<'b, Cursor<'b>, syn::Error, K, O,C>,
+    INNER: Combinator<'b, T, O,C>,
+    WRAPPER: Combinator<'b, Cursor<'b>, O,C>,
     O: Clone, 
-    C: Cache<'b, O, syn::Error, K>
+    C: Cache<'b, O>
 {	
 	///finds the start for the inside parser
     pub wrapper: WRAPPER,
     ///main parser that returns the final output
     pub inner: INNER,
     ///used so we can have generics
-    pub _phantom: PhantomData<(Cursor<'b>, T,K, O,C)>,
+    pub _phantom: PhantomData<(Cursor<'b>, T, O,C)>,
 }
 
 
-impl<'a, INNER, WRAPPER, T, K, O, C> Combinator<'a, T, syn::Error, K, O,C> for Wrapped<'a, INNER, WRAPPER, T, K, O, C>
+impl<'a, INNER, WRAPPER, T, O, C> Combinator<'a, T, O,C> for Wrapped<'a, INNER, WRAPPER, T, O, C>
 where
-    WRAPPER: Combinator<'a, Cursor<'a>, syn::Error, K, O,C>,
-    INNER: Combinator<'a, T, syn::Error, K, O,C>,
+    WRAPPER: Combinator<'a, Cursor<'a>, O,C>,
+    INNER: Combinator<'a, T, O,C>,
     O: Clone, 
-    C: Cache<'a, O, syn::Error, K>
+    C: Cache<'a, O>
 {
     fn parse(
         &self,
@@ -116,26 +115,24 @@ where
 /// assert_eq!(parsed_ident.unwrap().to_string(), "optional_var");
 /// ```
 //
-pub struct Maybe<'b, INNER,T =(),E=syn::Error, K= usize, O=T, C = FlexibleCache<'b,K,T,E>>
+pub struct Maybe<'b, INNER,T =(), O=T, C = FlexibleCache<'b,T>>
 where
-    INNER: Combinator<'b, T, E , K, O,C>,
+    INNER: Combinator<'b, T, O,C>,
     O: Clone,
-    E :Error + Clone, 
-    C: Cache<'b, O, E, K>
+    C: Cache<'b, O>
 {   
     pub inner: INNER,
     ///used so we can have generics
-    pub _phantom: PhantomData<(Cursor<'b>, T,E,K, O,C)>,
+    pub _phantom: PhantomData<(Cursor<'b>, T, O,C)>,
 }
 
-impl<'a, INNER,T,E, K, O, C> Combinator<'a, Option<T>, E, K, O,C> for Maybe<'a, INNER,T,E, K, O, C> 
+impl<'a, INNER,T, O, C> Combinator<'a, Option<T>, O,C> for Maybe<'a, INNER,T, O, C> 
     where O: Clone, 
-    E :Error + Clone,
-    C: Cache<'a, O, E, K>,
-    INNER: Combinator<'a, T, E, K, O,C>,
+    C: Cache<'a, O>,
+    INNER: Combinator<'a, T, O,C>,
 {
 
-fn parse(&self, input: Cursor<'a>, cache: &mut C) -> Pakerat<(Cursor<'a>, Option<T>), E> { 
+fn parse(&self, input: Cursor<'a>, cache: &mut C) -> Pakerat<(Cursor<'a>, Option<T>)> { 
     match self.inner.parse(input,cache){
         Ok((cursor,x)) => Ok((cursor,Some(x))),
         Err(e) => match e {
@@ -144,7 +141,7 @@ fn parse(&self, input: Cursor<'a>, cache: &mut C) -> Pakerat<(Cursor<'a>, Option
         }
     }
 }
-fn parse_ignore(&self, input: Cursor<'a>, cache: &mut C) -> Pakerat<Cursor<'a>, E> { 
+fn parse_ignore(&self, input: Cursor<'a>, cache: &mut C) -> Pakerat<Cursor<'a>> { 
     match self.inner.parse_ignore(input,cache){
         Ok(cursor) => Ok(cursor),
         Err(e) => match e {
@@ -155,12 +152,11 @@ fn parse_ignore(&self, input: Cursor<'a>, cache: &mut C) -> Pakerat<Cursor<'a>, 
 }
 }
 
-impl<'b, INNER,T,E, K, O, C> Maybe<'b, INNER,T,E, K, O, C> 
+impl<'b, INNER,T, O, C> Maybe<'b, INNER,T, O, C> 
 where
-    INNER: Combinator<'b, T, E , K, O,C>,
+    INNER: Combinator<'b, T, O,C>,
     O: Clone, 
-    E :Error + Clone,
-    C: Cache<'b, O, E, K>,
+    C: Cache<'b, O>,
 {
     
     pub fn new(inner:INNER) -> Self{
@@ -193,26 +189,24 @@ where
 /// let (_, parsed_idents) = my_parser.parse(buffer.begin(), &mut cache).unwrap();
 /// assert_eq!(parsed_idents.len(), 3);
 /// ```
-pub struct Many0<'b, INNER,T =(),E=syn::Error, K= usize, O=T, C = FlexibleCache<'b,K,T,E>>
+pub struct Many0<'b, INNER,T =(), O=T, C = FlexibleCache<'b,T>>
 where
-    INNER: Combinator<'b, T, E , K, O,C>,
+    INNER: Combinator<'b, T, O,C>,
     O: Clone, 
-    E:Error + Clone,
-    C: Cache<'b, O, E, K>
+    C: Cache<'b, O>
 {   
     pub inner: INNER,
     ///used so we can have generics
-    pub _phantom: PhantomData<(Cursor<'b>, T,E,K, O,C)>,
+    pub _phantom: PhantomData<(Cursor<'b>, T, O,C)>,
 }
 
-impl<'a, INNER,T,E, K, O, C> Combinator<'a, Vec<T>, E, K, O,C> for Many0<'a, INNER,T,E, K, O, C> 
+impl<'a, INNER,T, O, C> Combinator<'a, Vec<T>, O,C> for Many0<'a, INNER,T, O, C> 
     where O: Clone, 
-    E :Error + Clone,
-    C: Cache<'a, O, E, K>,
-    INNER: Combinator<'a, T, E, K, O,C>,
+    C: Cache<'a, O>,
+    INNER: Combinator<'a, T, O,C>,
 {
 
-fn parse(&self, mut input: Cursor<'a>, cache: &mut C) -> Pakerat<(Cursor<'a>, Vec<T>), E> { 
+fn parse(&self, mut input: Cursor<'a>, cache: &mut C) -> Pakerat<(Cursor<'a>, Vec<T>)> { 
     let mut vec = Vec::new();
     loop{
         match self.inner.parse(input,cache){
@@ -227,7 +221,7 @@ fn parse(&self, mut input: Cursor<'a>, cache: &mut C) -> Pakerat<(Cursor<'a>, Ve
         }
     }
 }
-fn parse_ignore(&self, mut input: Cursor<'a>, cache: &mut C) -> Pakerat<Cursor<'a>, E> { 
+fn parse_ignore(&self, mut input: Cursor<'a>, cache: &mut C) -> Pakerat<Cursor<'a>> { 
     loop{
         match self.inner.parse(input,cache){
             Ok((cursor,_x)) => {
@@ -242,12 +236,11 @@ fn parse_ignore(&self, mut input: Cursor<'a>, cache: &mut C) -> Pakerat<Cursor<'
 }
 }
 
-impl<'b, INNER,T,E, K, O, C> Many0<'b, INNER,T,E, K, O, C> 
+impl<'b, INNER,T, O, C> Many0<'b, INNER,T, O, C> 
 where
-    INNER: Combinator<'b, T, E , K, O,C>,
+    INNER: Combinator<'b, T, O,C>,
     O: Clone, 
-    E :Error + Clone,
-    C: Cache<'b, O, E, K>,
+    C: Cache<'b, O>,
 {
     
     pub fn new(inner:INNER) -> Self{
@@ -281,26 +274,24 @@ where
 /// let (_, parsed_idents) = my_parser.parse(buffer.begin(), &mut cache).unwrap();
 /// assert_eq!(parsed_idents.len(), 3);
 /// ```
-pub struct Many1<'b, INNER,T =(),E=syn::Error, K= usize, O=T, C = FlexibleCache<'b,K,T,E>>
+pub struct Many1<'b, INNER,T =(), O=T, C = FlexibleCache<'b>>
 where
-    INNER: Combinator<'b, T, E , K, O,C>,
+    INNER: Combinator<'b, T, O,C>,
     O: Clone, 
-    E:Error + Clone,
-    C: Cache<'b, O, E, K>
+    C: Cache<'b, O>
 {   
     pub inner: INNER,
     ///used so we can have generics
-    pub _phantom: PhantomData<(Cursor<'b>, T,E,K, O,C)>,
+    pub _phantom: PhantomData<(Cursor<'b>, T, O,C)>,
 }
 
-impl<'a, INNER,T,E, K, O, C> Combinator<'a, Vec<T>, E, K, O,C> for Many1<'a, INNER,T,E, K, O, C> 
+impl<'a, INNER,T, O, C> Combinator<'a, Vec<T>, O,C> for Many1<'a, INNER,T, O, C> 
     where O: Clone, 
-    E :Error + Clone,
-    C: Cache<'a, O, E, K>,
-    INNER: Combinator<'a, T, E, K, O,C>,
+    C: Cache<'a, O>,
+    INNER: Combinator<'a, T, O,C>,
 {
 
-fn parse(&self, input: Cursor<'a>, cache: &mut C) -> Pakerat<(Cursor<'a>, Vec<T>), E> { 
+fn parse(&self, input: Cursor<'a>, cache: &mut C) -> Pakerat<(Cursor<'a>, Vec<T>)> { 
     let (mut input,first) = self.inner.parse(input,cache)?;
     let mut vec = vec![first];
     loop{
@@ -316,7 +307,7 @@ fn parse(&self, input: Cursor<'a>, cache: &mut C) -> Pakerat<(Cursor<'a>, Vec<T>
         }
     }
 }
-fn parse_ignore(&self, input: Cursor<'a>, cache: &mut C) -> Pakerat<Cursor<'a>, E> { 
+fn parse_ignore(&self, input: Cursor<'a>, cache: &mut C) -> Pakerat<Cursor<'a>> { 
     let (mut input,_first) = self.inner.parse(input,cache)?;
     loop{
         match self.inner.parse(input,cache){
@@ -332,12 +323,11 @@ fn parse_ignore(&self, input: Cursor<'a>, cache: &mut C) -> Pakerat<Cursor<'a>, 
 }
 }
 
-impl<'b, INNER,T,E, K, O, C> Many1<'b, INNER,T,E, K, O, C> 
+impl<'b, INNER,T, O, C> Many1<'b, INNER,T, O, C> 
 where
-    INNER: Combinator<'b, T, E , K, O,C>,
+    INNER: Combinator<'b, T, O,C>,
     O: Clone, 
-    E :Error + Clone,
-    C: Cache<'b, O, E, K>,
+    C: Cache<'b, O>,
 {
     
     pub fn new(inner:INNER) -> Self{
@@ -369,37 +359,34 @@ where
 /// let mut cache = BasicCache::<0>::new();
 /// let (_cursor, ()) = my_parser.parse(buffer.begin(), &mut cache).unwrap();
 /// ```
-pub struct Ignore<'b, INNER,T =(),E=syn::Error, K= usize, O=T, C = FlexibleCache<'b,K,T,E>>
+pub struct Ignore<'b, INNER,T =(), O=T, C = FlexibleCache<'b>>
 where
-    INNER: Combinator<'b, T, E , K, O,C>,
+    INNER: Combinator<'b, T, O,C>,
     O: Clone, 
-    E:Error + Clone,
-    C: Cache<'b, O, E, K>
+    C: Cache<'b, O>
 {   
     pub inner: INNER,
     ///used so we can have generics
-    pub _phantom: PhantomData<(Cursor<'b>, T,E,K, O,C)>,
+    pub _phantom: PhantomData<(Cursor<'b>, T, O,C)>,
 }
 
-impl<'a, INNER,T,E, K, O, C> Combinator<'a, (), E, K, O,C> for Ignore<'a, INNER,T,E, K, O, C> 
+impl<'a, INNER,T, O, C> Combinator<'a, (), O,C> for Ignore<'a, INNER,T, O, C> 
     where O: Clone, 
-    E :Error + Clone,
-    C: Cache<'a, O, E, K>,
-    INNER: Combinator<'a, T, E, K, O,C>,
+    C: Cache<'a, O>,
+    INNER: Combinator<'a, T, O,C>,
 {
 
-fn parse(&self, input: Cursor<'a>, cache: &mut C) -> Pakerat<(Cursor<'a>, ()), E> { 
+fn parse(&self, input: Cursor<'a>, cache: &mut C) -> Pakerat<(Cursor<'a>, ())> { 
     let c = self.inner.parse_ignore(input,cache)?;
     Ok((c,()))
 }
 }
 
-impl<'b, INNER,T,E, K, O, C> Ignore<'b, INNER,T,E, K, O, C> 
+impl<'b, INNER,T, O, C> Ignore<'b, INNER,T, O, C> 
 where
-    INNER: Combinator<'b, T, E , K, O,C>,
+    INNER: Combinator<'b, T, O,C>,
     O: Clone, 
-    E :Error + Clone,
-    C: Cache<'b, O, E, K>,
+    C: Cache<'b, O>,
 {
     
     pub fn new(inner:INNER) -> Self{

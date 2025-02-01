@@ -8,7 +8,6 @@ use proc_macro2::Ident;
 use proc_macro2::Punct;
 use std::fmt;
 use crate::combinator::PakeratError;
-use crate::combinator::DumbyError;
 use crate::combinator::Combinator;
 use crate::cache::Cache;
 use crate::combinator::Pakerat;
@@ -174,67 +173,61 @@ pub fn streams_match<'a,'b>(mut start:Cursor<'b>,end:Cursor<'_>,mut input:Cursor
 	Ok(input)
 }
 
-pub fn streams_just_match<'a>(mut start:Cursor<'_>,end:Cursor<'_>,mut input:Cursor<'a>) -> Result<Cursor<'a>,DumbyError>{
-	while start!=end {
-		let (new_start,a) = match start.token_tree() {
-			None => break,
-			Some((tree,spot)) => {
-				(spot,tree)
-			}
-		};
+// pub fn streams_just_match<'a>(mut start:Cursor<'_>,end:Cursor<'_>,mut input:Cursor<'a>) -> Result<Cursor<'a>,DumbyError>{
+// 	while start!=end {
+// 		let (new_start,a) = match start.token_tree() {
+// 			None => break,
+// 			Some((tree,spot)) => {
+// 				(spot,tree)
+// 			}
+// 		};
 
-		let (new_input,b) = match input.token_tree() {
-			None => return Err(DumbyError),
-			Some((tree,spot)) => {
-				(spot,tree)
-			}
-		};
+// 		let (new_input,b) = match input.token_tree() {
+// 			None => return Err(DumbyError),
+// 			Some((tree,spot)) => {
+// 				(spot,tree)
+// 			}
+// 		};
 
-		let matches = match (a,b) {
-			(TokenTree::Ident(x),TokenTree::Ident(y)) => x==y,
-			(TokenTree::Punct(x),TokenTree::Punct(y)) => x.as_char()==y.as_char(),
-			(TokenTree::Literal(x),TokenTree::Literal(y)) => x.to_string()==y.to_string(),
-			(TokenTree::Group(_),TokenTree::Group(_)) => {
-				let (a,del_a,_,_) = start.any_group().unwrap();
-				let (b,del_b,_,_) = input.any_group().unwrap();
-				if del_a!=del_b {
-					false
-				}else{
-					let remaining = streams_just_match(a,end,b)?;
-					if !remaining.eof() {
-						return Err(DumbyError)
-					}
-					true
-				}
-			},
+// 		let matches = match (a,b) {
+// 			(TokenTree::Ident(x),TokenTree::Ident(y)) => x==y,
+// 			(TokenTree::Punct(x),TokenTree::Punct(y)) => x.as_char()==y.as_char(),
+// 			(TokenTree::Literal(x),TokenTree::Literal(y)) => x.to_string()==y.to_string(),
+// 			(TokenTree::Group(_),TokenTree::Group(_)) => {
+// 				let (a,del_a,_,_) = start.any_group().unwrap();
+// 				let (b,del_b,_,_) = input.any_group().unwrap();
+// 				if del_a!=del_b {
+// 					false
+// 				}else{
+// 					let remaining = streams_just_match(a,end,b)?;
+// 					if !remaining.eof() {
+// 						return Err(DumbyError)
+// 					}
+// 					true
+// 				}
+// 			},
 			
-		    _ => false,
-		};
+// 		    _ => false,
+// 		};
 
-		if !matches {
-			return Err(DumbyError)
-		}
+// 		if !matches {
+// 			return Err(DumbyError)
+// 		}
 
-		input = new_input;
-		start = new_start;
-	}
-	Ok(input)
-}
-#[derive(Clone,Copy,PartialEq)]
+// 		input = new_input;
+// 		start = new_start;
+// 	}
+// 	Ok(input)
+// }
+#[derive(Clone,Copy)]
 pub struct MatchParser<'b>{
 	pub start:Cursor<'b>,
 	pub end:Cursor<'b>
 }
 
-impl<'a, K, O:Clone,C: Cache<'a, O, DumbyError, K>> Combinator<'a,(), DumbyError,K,O,C> for MatchParser<'_>{
-	fn parse(&self, input: Cursor<'a>,_state: &mut C) -> Pakerat<(Cursor<'a>,()), DumbyError>{
-		let ans = streams_just_match(self.start,self.end,input).map_err(PakeratError::Regular)?;
-		Ok((ans,()))
-	}
-}
 
-impl<'a, K, O:Clone,C: Cache<'a, O, syn::Error, K>> Combinator<'a, (), syn::Error,K,O,C> for MatchParser<'_>{
-	fn parse(&self, input: Cursor<'a>,_state: &mut C) -> Pakerat<(Cursor<'a>,()), syn::Error>{
+impl<'a, O:Clone,C: Cache<'a, O>> Combinator<'a, (),O,C> for MatchParser<'_>{
+	fn parse(&self, input: Cursor<'a>,_state: &mut C) -> Pakerat<(Cursor<'a>,())>{
 		let ans = streams_match(self.start,self.end,input,Delimiter::None,None)
 			.map_err(|e| PakeratError::Regular(e.into()))?;
 		Ok((ans,()))
@@ -246,24 +239,13 @@ macro_rules! define_parser {
         #[derive(Debug, Clone, Copy, PartialEq)]
         pub struct $name;
 
-        impl<'a, K, O:Clone,C: Cache<'a, O, syn::Error, K>> Combinator<'a, $output, syn::Error, K,O,C> for $name {
+        impl<'a, O:Clone,C: Cache<'a, O>> Combinator<'a, $output,O,C> for $name {
             #[inline]
             fn parse(&self, input: Cursor<'a>, _state: &mut C) -> Pakerat<(Cursor<'a>, $output), syn::Error> {
                 if let Some((x, ans)) = input.$method() {
                     Ok((ans, x))
                 } else {
                     Err(PakeratError::Regular(syn::Error::new(input.span(), $syn_err_msg)))
-                }
-            }
-        }
-
-        impl<'a, K, O:Clone,C: Cache<'a, O, DumbyError, K>> Combinator<'a, $output, DumbyError, K,O,C> for $name {
-            #[inline]
-            fn parse(&self, input: Cursor<'a>, _state: &mut C) -> Pakerat<(Cursor<'a>, $output), DumbyError> {
-                if let Some((x, ans)) = input.$method() {
-                    Ok((ans, x))
-                } else {
-                    Err(PakeratError::Regular(DumbyError))
                 }
             }
         }
@@ -290,7 +272,7 @@ impl Parse for BasicInt {
     }
 }
 
-impl<'a, K, O:Clone,C: Cache<'a, O, syn::Error, K>> Combinator<'a, i64, syn::Error,K,O,C> for NumParser{
+impl<'a, O:Clone,C: Cache<'a, O>> Combinator<'a, i64,O,C> for NumParser{
 	fn parse(&self, input: Cursor<'a>,_state: &mut C) -> Pakerat<(Cursor<'a>,i64), syn::Error>{
 		if let Some((x, cursor)) = input.literal() {
             let i : BasicInt = syn:: parse2(x.into_token_stream()).map_err(PakeratError::Regular)?;
@@ -306,18 +288,7 @@ impl<'a, K, O:Clone,C: Cache<'a, O, syn::Error, K>> Combinator<'a, i64, syn::Err
 pub struct DelParser(pub Delimiter);
 
 
-impl<'a, K, O:Clone,C: Cache<'a, O, DumbyError, K>> Combinator<'a, Cursor<'a>, DumbyError, K,O,C> for DelParser {
-    #[inline]
-    fn parse(&self, input: Cursor<'a>, _state: &mut C) -> Pakerat<(Cursor<'a>, Cursor<'a>), DumbyError>{
-        if let Some((x,_span, next)) = input.group(self.0) {
-            Ok((next, x))
-        } else {
-            Err(PakeratError::Regular(DumbyError))
-        }
-    }
-}
-
-impl<'a, K, O:Clone,C: Cache<'a, O, syn::Error, K>> Combinator<'a, Cursor<'a>, syn::Error, K,O,C> for DelParser {
+impl<'a, O:Clone,C: Cache<'a, O>> Combinator<'a, Cursor<'a>,O,C> for DelParser {
     #[inline]
     fn parse(&self, input: Cursor<'a>, _state: &mut C) -> Pakerat<(Cursor<'a>, Cursor<'a>), syn::Error>{
         if let Some((x,_span, next)) = input.group(self.0) {
@@ -330,18 +301,8 @@ impl<'a, K, O:Clone,C: Cache<'a, O, syn::Error, K>> Combinator<'a, Cursor<'a>, s
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct AnyDelParser;
-impl<'a, K, O:Clone,C: Cache<'a, O, DumbyError, K>> Combinator<'a, Cursor<'a>, DumbyError, K,O,C> for AnyDelParser {
-    #[inline]
-    fn parse(&self, input: Cursor<'a>, _state: &mut C) -> Pakerat<(Cursor<'a>, Cursor<'a>), DumbyError>{
-        if let Some((x,_,_, next)) = input.any_group() {
-            Ok((next, x))
-        } else {
-            Err(PakeratError::Regular(DumbyError))
-        }
-    }
-}
 
-impl<'a, K, O:Clone,C: Cache<'a, O, syn::Error, K>> Combinator<'a, Cursor<'a>, syn::Error, K,O,C> for AnyDelParser {
+impl<'a, O:Clone,C: Cache<'a, O>> Combinator<'a, Cursor<'a>,O,C> for AnyDelParser {
     #[inline]
     fn parse(&self, input: Cursor<'a>, _state: &mut C) -> Pakerat<(Cursor<'a>, Cursor<'a>), syn::Error>{
         if let Some((x,_,_, next)) = input.any_group() {
@@ -441,7 +402,7 @@ use super::*;
         token_cursor!(buffer2, "let x =");
         let parser = MatchParser { start: buffer1, end: Cursor::empty() };
 
-        let mut cache: BasicCache<0, (), DumbyError> = HashMap::new();
+        let mut cache: BasicCache<0, ()> = HashMap::new();
 
 
         let result = parser.parse(buffer2, &mut cache);
