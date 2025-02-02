@@ -4,6 +4,14 @@ use std::error::Error;
 use crate::cache::Cache;
 use syn::buffer::Cursor;
 
+// #[derive(Debug,Clone)]
+// pub enum ParseError{
+//     Syn(Rc<syn::Error>),
+//     Regular(),
+//     Stock
+//     None,
+// }
+
 ///error type for handeling recursive parses.
 ///
 ///unlike the usual errors a recursive parse error should terminate the entire parse.

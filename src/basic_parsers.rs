@@ -22,35 +22,35 @@ pub struct DelMark{
 	pub span:Span
 }
 
-pub enum Found<'a> {
-	Spot(Cursor<'a>),
+pub enum Found {
+	Spot(Span),
 	End(DelMark),
 	Start(DelMark),
 }
 
-impl<'a> Found<'a> {
-	pub fn start_of(spot:Cursor<'a>) -> Self{
+impl Found {
+	pub fn start_of(spot:Cursor) -> Self{
 		match spot.any_group(){
 			Some((_,del,del_span,_)) => Found::Start(DelMark{del,span:del_span.open()}),
-			None => Found::Spot(spot)
+			None => Found::Spot(spot.span())
 		}
 	}
 
 	/// Retrieves the span associated with this `Found` variant.
     fn span(&self) -> Span {
         match self {
-            Found::Spot(cursor) => cursor.span(),
+            Found::Spot(span) => *span,
             Found::Start(del_mark) | Found::End(del_mark) => del_mark.span,
         }
     }
 }
 
-impl fmt::Display for Found<'_> {
+impl fmt::Display for Found {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Found::Spot(cursor) => match cursor.span().source_text() {
+            Found::Spot(span) => match span.source_text() {
             	Some(s) => write!(f, "{}",s),
-            	None => write!(f, "<missing source : {:?}>",cursor.span()),
+            	None => write!(f, "<missing source : {:?}>",span),
             }
             Found::Start(del_mark) => write!(f, "{}", get_start_del(del_mark.del)),
             Found::End(del_mark) => write!(f, "{}", get_end_del(del_mark.del)),
@@ -58,27 +58,27 @@ impl fmt::Display for Found<'_> {
     }
 }
 
-pub enum Expected<'a> {
-	Spot(Cursor<'a>),
+pub enum Expected {
+	Spot(Span),
 	End(Delimiter),
 	Start(Delimiter),
 }
 
-impl<'a> Expected<'a> {
-	pub fn start_of(spot:Cursor<'a>) -> Self{
+impl Expected {
+	pub fn start_of(spot:Cursor<'_>) -> Self{
 		match spot.any_group(){
 			Some((_,del,_,_)) => Expected::Start(del),
-			None => Expected::Spot(spot)
+			None => Expected::Spot(spot.span())
 		}
 	}
 }
 
-impl fmt::Display for Expected<'_> {
+impl fmt::Display for Expected {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Expected::Spot(cursor) => match cursor.span().source_text() {
+            Expected::Spot(span) => match span.source_text() {
             	Some(s) => write!(f, "{}",s),
-            	None => write!(f, "<missing source : {:?}>",cursor.span()),
+            	None => write!(f, "<missing source : {:?}>",span),
             }
             Expected::Start(del) => write!(f, "{}", get_start_del(*del)),
             Expected::End(del) => write!(f, "{}", get_end_del(*del)),
@@ -86,9 +86,9 @@ impl fmt::Display for Expected<'_> {
     }
 }
 
-pub struct Mismatch<'a,'b>{
-	pub actual:Found<'a>,
-	pub expected: Expected<'b>,
+pub struct Mismatch{
+	pub actual:Found,
+	pub expected: Expected,
 }
 
 pub fn get_start_del(del:Delimiter) -> &'static str {
@@ -110,7 +110,7 @@ pub fn get_end_del(del:Delimiter) -> &'static str {
 }
 
 #[allow(clippy::from_over_into)]
-impl Into<syn::Error> for Mismatch<'_, '_> {
+impl Into<syn::Error> for Mismatch {
     fn into(self) -> syn::Error {
         let span = self.actual.span(); // Use the actual's span in all cases
         let msg =  format!("Expected \"{}\" but found \"{}\"", self.expected,self.actual);
@@ -119,7 +119,7 @@ impl Into<syn::Error> for Mismatch<'_, '_> {
     }
 }
 
-pub fn streams_match<'a,'b>(mut start:Cursor<'b>,end:Cursor<'_>,mut input:Cursor<'a>,del:Delimiter,end_span:Option<&DelimSpan>) -> Result<Cursor<'a>,Mismatch<'a,'b>>{
+pub fn streams_match<'a,'b>(mut start:Cursor<'b>,end:Cursor<'_>,mut input:Cursor<'a>,del:Delimiter,end_span:Option<&DelimSpan>) -> Result<Cursor<'a>,Mismatch>{
 	while start!=end {
 		let (new_start,a) = match start.token_tree() {
 			None => break,
@@ -130,7 +130,7 @@ pub fn streams_match<'a,'b>(mut start:Cursor<'b>,end:Cursor<'_>,mut input:Cursor
 
 		let (new_input,b) = match input.token_tree() {
 			None => return Err(Mismatch{
-				expected: Expected::Spot(start),
+				expected: Expected::Spot(start.span()),
 				actual:Found::End(DelMark{del,span:end_span.map(|x| x.close()).unwrap_or_else(|| input.span())})
 			}),
 			Some((tree,spot)) => {
@@ -153,7 +153,7 @@ pub fn streams_match<'a,'b>(mut start:Cursor<'b>,end:Cursor<'_>,mut input:Cursor
 						return Err(
 							Mismatch{
 								expected:Expected::End(del_a),
-								actual:Found::Spot(remaining)
+								actual:Found::Spot(remaining.span())
 							});
 					}
 					true
