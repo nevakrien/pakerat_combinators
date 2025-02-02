@@ -1,8 +1,12 @@
+use crate::core::Found;
+use crate::core::Expected;
+use crate::core::Mismatch;
+use crate::core::ParseError;
 use crate::cache::FlexibleCache;
 use crate::combinator::{Pakerat,Combinator};
 use crate::cache::Cache;
 use crate::combinator::PakeratError;
-use syn::buffer::Cursor;
+use crate::core::Input;
 
 use std::marker::PhantomData;
 
@@ -17,11 +21,13 @@ use std::marker::PhantomData;
 /// use pakerat_combinators::multi::{Wrapped};
 /// use pakerat_combinators::combinator::Combinator;
 /// use pakerat_combinators::cache::BasicCache;
+/// use pakerat_combinators::core::Input;
 /// use syn::buffer::TokenBuffer;
 /// use std::marker::PhantomData;
 /// 
 /// let tokens = "{ my_var }".parse().unwrap();
 /// let buffer = TokenBuffer::new2(tokens);
+/// let input = Input::new(&buffer);
 ///
 ///
 /// let my_parser = Wrapped {
@@ -31,13 +37,13 @@ use std::marker::PhantomData;
 /// };
 ///
 /// let mut cache  = BasicCache::<0>::new();
-/// let (_, parsed_ident) = my_parser.parse(buffer.begin(), &mut cache).unwrap();
+/// let (_, parsed_ident) = my_parser.parse(input, &mut cache).unwrap();
 /// assert_eq!(parsed_ident.to_string(), "my_var");
 /// ```
 pub struct Wrapped<'b, INNER,WRAPPER,T =(), O=T, C = FlexibleCache<'b,T>>
 where
     INNER: Combinator<'b, T, O,C>,
-    WRAPPER: Combinator<'b, Cursor<'b>, O,C>,
+    WRAPPER: Combinator<'b, Input<'b>, O,C>,
     O: Clone, 
     C: Cache<'b, O>
 {	
@@ -46,29 +52,31 @@ where
     ///main parser that returns the final output
     pub inner: INNER,
     ///used so we can have generics
-    pub _phantom: PhantomData<(Cursor<'b>, T, O,C)>,
+    pub _phantom: PhantomData<(Input<'b>, T, O,C)>,
 }
 
 
 impl<'a, INNER, WRAPPER, T, O, C> Combinator<'a, T, O,C> for Wrapped<'a, INNER, WRAPPER, T, O, C>
 where
-    WRAPPER: Combinator<'a, Cursor<'a>, O,C>,
+    WRAPPER: Combinator<'a, Input<'a>, O,C>,
     INNER: Combinator<'a, T, O,C>,
     O: Clone, 
     C: Cache<'a, O>
 {
     fn parse(
         &self,
-        input: Cursor<'a>,
+        input: Input<'a>,
         cache: &mut C,
-    ) -> Pakerat<(Cursor<'a>, T)> {
+    ) -> Pakerat<(Input<'a>, T)> {
         let (next, inner_result) = self.wrapper.parse(input, cache)?;
         let (remaining, final_result) = self.inner.parse(inner_result, cache)?;
 
         if !remaining.eof() {
-        	return Err(PakeratError::Regular(syn::Error::new(
-        		remaining.span(),"expected one of '})]' or EOF"
-        		)))
+            return Err(PakeratError::Regular(ParseError::Simple(
+                Mismatch{
+                    actual:Found::end_of(remaining),
+                    expected:Expected::Text("expected one of '})]' or EOF")
+                })))
         }
 
         Ok((next, final_result))
@@ -76,16 +84,18 @@ where
 
     fn parse_ignore(
         &self,
-        input: Cursor<'a>,
+        input: Input<'a>,
         cache: &mut C,
-    ) -> Pakerat<Cursor<'a>> {
+    ) -> Pakerat<Input<'a>> {
         let (next, inner_result) = self.wrapper.parse(input, cache)?;
         let remaining= self.inner.parse_ignore(inner_result, cache)?;
 
         if !remaining.eof() {
-            return Err(PakeratError::Regular(syn::Error::new(
-                remaining.span(),"expected one of '})]' or EOF"
-                )))
+            return Err(PakeratError::Regular(ParseError::Simple(
+                Mismatch{
+                    actual:Found::end_of(remaining),
+                    expected:Expected::Text("expected one of '})]' or EOF")
+                })))
         }
 
         Ok(next)
@@ -102,16 +112,18 @@ where
 /// use pakerat_combinators::combinator::Combinator;
 /// use pakerat_combinators::basic_parsers::IdentParser;
 /// use pakerat_combinators::cache::BasicCache;
+/// use pakerat_combinators::core::Input;
 /// use syn::buffer::TokenBuffer;
 /// use std::marker::PhantomData;
 ///
 /// let tokens = "optional_var".parse().unwrap();
 /// let buffer = TokenBuffer::new2(tokens);
+/// let input = Input::new(&buffer);
 ///
 /// let my_parser = Maybe::new(IdentParser);
 ///
 /// let mut cache = BasicCache::<0>::new();
-/// let (_, parsed_ident) = my_parser.parse(buffer.begin(), &mut cache).unwrap();
+/// let (_, parsed_ident) = my_parser.parse(input, &mut cache).unwrap();
 /// assert_eq!(parsed_ident.unwrap().to_string(), "optional_var");
 /// ```
 //
@@ -123,7 +135,7 @@ where
 {   
     pub inner: INNER,
     ///used so we can have generics
-    pub _phantom: PhantomData<(Cursor<'b>, T, O,C)>,
+    pub _phantom: PhantomData<(Input<'b>, T, O,C)>,
 }
 
 impl<'a, INNER,T, O, C> Combinator<'a, Option<T>, O,C> for Maybe<'a, INNER,T, O, C> 
@@ -132,18 +144,18 @@ impl<'a, INNER,T, O, C> Combinator<'a, Option<T>, O,C> for Maybe<'a, INNER,T, O,
     INNER: Combinator<'a, T, O,C>,
 {
 
-fn parse(&self, input: Cursor<'a>, cache: &mut C) -> Pakerat<(Cursor<'a>, Option<T>)> { 
+fn parse(&self, input: Input<'a>, cache: &mut C) -> Pakerat<(Input<'a>, Option<T>)> { 
     match self.inner.parse(input,cache){
-        Ok((cursor,x)) => Ok((cursor,Some(x))),
+        Ok((new_input,x)) => Ok((new_input,Some(x))),
         Err(e) => match e {
             PakeratError::Regular(_) => Ok((input,None)),
             PakeratError::Recursive(_) => Err(e)
         }
     }
 }
-fn parse_ignore(&self, input: Cursor<'a>, cache: &mut C) -> Pakerat<Cursor<'a>> { 
+fn parse_ignore(&self, input: Input<'a>, cache: &mut C) -> Pakerat<Input<'a>> { 
     match self.inner.parse_ignore(input,cache){
-        Ok(cursor) => Ok(cursor),
+        Ok(new_input) => Ok(new_input),
         Err(e) => match e {
             PakeratError::Regular(_) => Ok(input),
             PakeratError::Recursive(_) => Err(e)
@@ -177,16 +189,18 @@ where
 /// use pakerat_combinators::combinator::Combinator;
 /// use pakerat_combinators::basic_parsers::IdentParser;
 /// use pakerat_combinators::cache::BasicCache;
+/// use pakerat_combinators::core::Input;
 /// use syn::buffer::TokenBuffer;
 /// use std::marker::PhantomData;
 ///
 /// let tokens = "var1 var2 var3".parse().unwrap();
 /// let buffer = TokenBuffer::new2(tokens);
+/// let input = Input::new(&buffer);
 ///
 /// let my_parser = Many0::new(IdentParser);
 ///
 /// let mut cache = BasicCache::<0>::new();
-/// let (_, parsed_idents) = my_parser.parse(buffer.begin(), &mut cache).unwrap();
+/// let (_, parsed_idents) = my_parser.parse(input, &mut cache).unwrap();
 /// assert_eq!(parsed_idents.len(), 3);
 /// ```
 pub struct Many0<'b, INNER,T =(), O=T, C = FlexibleCache<'b,T>>
@@ -197,7 +211,7 @@ where
 {   
     pub inner: INNER,
     ///used so we can have generics
-    pub _phantom: PhantomData<(Cursor<'b>, T, O,C)>,
+    pub _phantom: PhantomData<(Input<'b>, T, O,C)>,
 }
 
 impl<'a, INNER,T, O, C> Combinator<'a, Vec<T>, O,C> for Many0<'a, INNER,T, O, C> 
@@ -206,12 +220,12 @@ impl<'a, INNER,T, O, C> Combinator<'a, Vec<T>, O,C> for Many0<'a, INNER,T, O, C>
     INNER: Combinator<'a, T, O,C>,
 {
 
-fn parse(&self, mut input: Cursor<'a>, cache: &mut C) -> Pakerat<(Cursor<'a>, Vec<T>)> { 
+fn parse(&self, mut input: Input<'a>, cache: &mut C) -> Pakerat<(Input<'a>, Vec<T>)> { 
     let mut vec = Vec::new();
     loop{
         match self.inner.parse(input,cache){
-            Ok((cursor,x)) => {
-                input=cursor;
+            Ok((new_input,x)) => {
+                input=new_input;
                 vec.push(x);
             },
             Err(e) => return match e{
@@ -221,11 +235,11 @@ fn parse(&self, mut input: Cursor<'a>, cache: &mut C) -> Pakerat<(Cursor<'a>, Ve
         }
     }
 }
-fn parse_ignore(&self, mut input: Cursor<'a>, cache: &mut C) -> Pakerat<Cursor<'a>> { 
+fn parse_ignore(&self, mut input: Input<'a>, cache: &mut C) -> Pakerat<Input<'a>> { 
     loop{
         match self.inner.parse(input,cache){
-            Ok((cursor,_x)) => {
-                input=cursor;
+            Ok((new_input,_x)) => {
+                input=new_input;
             },
             Err(e) => return match e{
                 PakeratError::Regular(_)=> Ok(input),
@@ -261,6 +275,7 @@ where
 /// use pakerat_combinators::multi::Many1;
 /// use pakerat_combinators::combinator::Combinator;
 /// use pakerat_combinators::basic_parsers::IdentParser;
+/// use pakerat_combinators::core::Input;
 /// use pakerat_combinators::cache::BasicCache;
 /// use syn::buffer::TokenBuffer;
 /// use std::marker::PhantomData;
@@ -269,9 +284,10 @@ where
 /// let buffer = TokenBuffer::new2(tokens);
 ///
 /// let my_parser = Many1::new(IdentParser);
+/// let input = Input::new(&buffer);
 ///
 /// let mut cache = BasicCache::<0>::new();
-/// let (_, parsed_idents) = my_parser.parse(buffer.begin(), &mut cache).unwrap();
+/// let (_, parsed_idents) = my_parser.parse(input, &mut cache).unwrap();
 /// assert_eq!(parsed_idents.len(), 3);
 /// ```
 pub struct Many1<'b, INNER,T =(), O=T, C = FlexibleCache<'b>>
@@ -282,7 +298,7 @@ where
 {   
     pub inner: INNER,
     ///used so we can have generics
-    pub _phantom: PhantomData<(Cursor<'b>, T, O,C)>,
+    pub _phantom: PhantomData<(Input<'b>, T, O,C)>,
 }
 
 impl<'a, INNER,T, O, C> Combinator<'a, Vec<T>, O,C> for Many1<'a, INNER,T, O, C> 
@@ -291,13 +307,13 @@ impl<'a, INNER,T, O, C> Combinator<'a, Vec<T>, O,C> for Many1<'a, INNER,T, O, C>
     INNER: Combinator<'a, T, O,C>,
 {
 
-fn parse(&self, input: Cursor<'a>, cache: &mut C) -> Pakerat<(Cursor<'a>, Vec<T>)> { 
+fn parse(&self, input: Input<'a>, cache: &mut C) -> Pakerat<(Input<'a>, Vec<T>)> { 
     let (mut input,first) = self.inner.parse(input,cache)?;
     let mut vec = vec![first];
     loop{
         match self.inner.parse(input,cache){
-            Ok((cursor,x)) => {
-                input=cursor;
+            Ok((new_input,x)) => {
+                input=new_input;
                 vec.push(x);
             },
             Err(e) => return match e{
@@ -307,12 +323,12 @@ fn parse(&self, input: Cursor<'a>, cache: &mut C) -> Pakerat<(Cursor<'a>, Vec<T>
         }
     }
 }
-fn parse_ignore(&self, input: Cursor<'a>, cache: &mut C) -> Pakerat<Cursor<'a>> { 
+fn parse_ignore(&self, input: Input<'a>, cache: &mut C) -> Pakerat<Input<'a>> { 
     let (mut input,_first) = self.inner.parse(input,cache)?;
     loop{
         match self.inner.parse(input,cache){
-            Ok((cursor,_x)) => {
-                input=cursor;
+            Ok((new_input,_x)) => {
+                input=new_input;
             },
             Err(e) => return match e{
                 PakeratError::Regular(_)=> Ok(input),
@@ -347,17 +363,19 @@ where
 /// use pakerat_combinators::multi::Ignore;
 /// use pakerat_combinators::combinator::Combinator;
 /// use pakerat_combinators::basic_parsers::IdentParser;
+/// use pakerat_combinators::core::Input;
 /// use pakerat_combinators::cache::BasicCache;
 /// use syn::buffer::TokenBuffer;
 /// use std::marker::PhantomData;
 ///
 /// let tokens = "optional_var".parse().unwrap();
 /// let buffer = TokenBuffer::new2(tokens);
+/// let input = Input::new(&buffer);
 ///
 /// let my_parser = Ignore::new(IdentParser);
 ///
 /// let mut cache = BasicCache::<0>::new();
-/// let (_cursor, ()) = my_parser.parse(buffer.begin(), &mut cache).unwrap();
+/// let (_cursor, ()) = my_parser.parse(input, &mut cache).unwrap();
 /// ```
 pub struct Ignore<'b, INNER,T =(), O=T, C = FlexibleCache<'b>>
 where
@@ -367,7 +385,7 @@ where
 {   
     pub inner: INNER,
     ///used so we can have generics
-    pub _phantom: PhantomData<(Cursor<'b>, T, O,C)>,
+    pub _phantom: PhantomData<(Input<'b>, T, O,C)>,
 }
 
 impl<'a, INNER,T, O, C> Combinator<'a, (), O,C> for Ignore<'a, INNER,T, O, C> 
@@ -376,7 +394,7 @@ impl<'a, INNER,T, O, C> Combinator<'a, (), O,C> for Ignore<'a, INNER,T, O, C>
     INNER: Combinator<'a, T, O,C>,
 {
 
-fn parse(&self, input: Cursor<'a>, cache: &mut C) -> Pakerat<(Cursor<'a>, ())> { 
+fn parse(&self, input: Input<'a>, cache: &mut C) -> Pakerat<(Input<'a>, ())> { 
     let c = self.inner.parse_ignore(input,cache)?;
     Ok((c,()))
 }
@@ -417,12 +435,12 @@ use crate::cache::BasicCache;
 use proc_macro2::Delimiter;
 
 use crate::basic_parsers::IdentParser;
-/// Macro to safely create a `TokenBuffer` and `Cursor` with a proper lifetime.
+/// Macro to safely create a `TokenBuffer` and `Input` with a proper lifetime.
 macro_rules! token_cursor {
     ($name:ident, $input:expr) => {
         let tokens: TokenStream = $input.parse().unwrap(); // Unwrap directly for clearer failure
         let buffer = TokenBuffer::new2(tokens); // Keep buffer alive
-        let $name = buffer.begin(); // Extract cursor
+        let $name = Input::new(&buffer); // Extract Input
     };
 }
 
@@ -492,7 +510,7 @@ fn test_many1_parser_fail() {
 
 #[test]
     fn test_inside_delimited_ident() {
-        // Create token cursor from `{ my_var }`
+        // Create token Input from `{ my_var }`
         token_cursor!(buffer, "{ my_var }");
 
         // Combine them in Wrapped
@@ -508,7 +526,7 @@ fn test_many1_parser_fail() {
         assert!(result.is_ok(), "Wrapped parser should successfully parse an identifier inside `{{}}`");
         let (remaining, parsed_ident) = result.unwrap();
         assert_eq!(parsed_ident.to_string(), "my_var", "Parsed identifier should be 'my_var'");
-        assert!(remaining.eof(), "Remaining cursor should be empty");
+        assert!(remaining.eof(), "Remaining Input should be empty");
     }
 
     #[test]
@@ -527,7 +545,7 @@ fn test_many1_parser_fail() {
         assert!(result.is_ok(), "Wrapped parser should successfully parse a punctuation inside `()`");
         let (remaining, parsed_punct) = result.unwrap();
         assert_eq!(parsed_punct.as_char(), '+', "Parsed punctuation should be `+`");
-        assert!(remaining.eof(), "Remaining cursor should be empty");
+        assert!(remaining.eof(), "Remaining Input should be empty");
     }
 
     #[test]
@@ -546,7 +564,7 @@ fn test_many1_parser_fail() {
         assert!(result.is_ok(), "Wrapped parser should successfully parse a literal inside any delimiter");
         let (remaining, parsed_literal) = result.unwrap();
         assert_eq!(parsed_literal.to_string(), "\"Hello\"", "Parsed literal should be '\"Hello\"'");
-        assert!(remaining.eof(), "Remaining cursor should be empty");
+        assert!(remaining.eof(), "Remaining Input should be empty");
     }
 
     #[test]

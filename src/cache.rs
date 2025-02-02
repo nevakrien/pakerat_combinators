@@ -1,9 +1,10 @@
+use crate::core::ParseError;
 use std::fmt::Display;
 use std::marker::PhantomData;
 use crate::combinator::Combinator;
 use crate::combinator::Pakerat;
 use crate::combinator::PakeratError;
-use syn::buffer::Cursor;
+use crate::core::Input;
 use std::ops::IndexMut;
 use std::ops::Index;
 use std::fmt::Debug;
@@ -42,7 +43,7 @@ impl<T> Collection<T> for HashCollection<T>{
 
 #[test]
 fn hashes() {
-	let mut map: HashCollection<Cursor> = HashCollection(HashMap::new());
+	let mut map: HashCollection<Input> = HashCollection(HashMap::new());
 	map.get(2);
 }
 
@@ -86,7 +87,7 @@ impl<T: PartialEq> PartialEq for CacheStatus<T> {
 }
 
 impl<T: Eq> Eq for CacheStatus<T> {}
-pub type CacheEntry<'a,T = ()> = CacheStatus<Pakerat<(Cursor<'a>,T)>>;
+pub type CacheEntry<'a,T = ()> = CacheStatus<Pakerat<(Input<'a>,T)>>;
 
 impl<'a, T> CacheEntry<'a, T>
 where
@@ -95,7 +96,7 @@ where
 	///this is used to finalize the result of a search
 	///
 	///it will automatically move pending results to full errors and panic on an empty cache
-    pub fn finalize<F: FnOnce() -> syn::Error>(&mut self, err_f: F) -> Pakerat<(Cursor<'a>,T)> {
+    pub fn finalize<F: FnOnce() -> ParseError>(&mut self, err_f: F) -> Pakerat<(Input<'a>,T)> {
         match self {
             CacheStatus::Empty => unreachable!("bad finalize call on an empty cache"),
             CacheStatus::Pending => {
@@ -192,8 +193,8 @@ pub trait Cache<'a, T : Clone = ()> {
 	///however it will still reject some grammers.
 	///for instance "expr + term => expr" would not work because it causes an infinite left recursive loop. 
 	///but "term + expr => expr" will work
-    fn parse_cached<P,FE>(&mut self,input:Cursor<'a>, key: usize ,parser:&P,recurse_err:FE) -> Pakerat<(Cursor<'a>,T)>
-    where P:Combinator<'a,T,T,Self> + ?Sized, FE:FnOnce() -> syn::Error, Self: Sized
+    fn parse_cached<P,FE>(&mut self,input:Input<'a>, key: usize ,parser:&P,recurse_err:FE) -> Pakerat<(Input<'a>,T)>
+    where P:Combinator<'a,T,T,Self> + ?Sized, FE:FnOnce() -> ParseError, Self: Sized
     {	
     	let id = input.span().byte_range().start;
     	let spot = self.get_slot(id).get(key).expect("missing key");
@@ -268,22 +269,24 @@ where
 /// ```rust
 /// use pakerat_combinators::combinator::Combinator;
 /// use pakerat_combinators::basic_parsers::IdentParser;
+/// use pakerat_combinators::core::Input;
 /// use pakerat_combinators::cache::{CachedComb, FlexibleCache,UsizeCachedComb};
-/// use syn::buffer::{TokenBuffer,Cursor};
+/// use syn::buffer::{TokenBuffer};
 ///
 ///
 /// let tokens = "cached_var".parse().unwrap();
 /// let buffer = TokenBuffer::new2(tokens);
+/// let input = Input::new(&buffer);
 ///
 /// let my_parser = UsizeCachedComb::new(IdentParser, 0, "Cache miss error");
 ///
 /// let mut cache = FlexibleCache::<_>::default();
-/// let (_, parsed_ident) = my_parser.parse(buffer.begin(), &mut cache).unwrap();
+/// let (_, parsed_ident) = my_parser.parse(input, &mut cache).unwrap();
 ///
 /// assert_eq!(parsed_ident.to_string(), "cached_var");
 ///
 /// // Parsing again should retrieve from the cache (even if the input is diffrent)
-/// let (_, cached_ident) = my_parser.parse(Cursor::empty(), &mut cache).unwrap();
+/// let (_, cached_ident) = my_parser.parse(Input::empty(), &mut cache).unwrap();
 /// assert_eq!(cached_ident.to_string(), "cached_var");
 /// ```
 ///
@@ -291,23 +294,25 @@ where
 /// ```rust
 /// use pakerat_combinators::combinator::Combinator;
 /// use pakerat_combinators::basic_parsers::IdentParser;
+/// use pakerat_combinators::core::Input;
 /// use pakerat_combinators::cache::{CachedComb, BasicCache,FixedCachedComb};
-/// use syn::buffer::{TokenBuffer,Cursor};
+/// use syn::buffer::{TokenBuffer};
 /// use proc_macro2::Ident;
 ///
 ///
 /// let tokens = "fixed_cached_var".parse().unwrap();
 /// let buffer = TokenBuffer::new2(tokens);
+/// let input = Input::new(&buffer);
 ///
 /// let my_parser = FixedCachedComb::<8, _,_,_>::new(IdentParser, 0, "Cache miss error");
 ///
 /// let mut cache = BasicCache::<8,Ident>::new();
-/// let (_, parsed_ident) = my_parser.parse(buffer.begin(), &mut cache).unwrap();
+/// let (_, parsed_ident) = my_parser.parse(input, &mut cache).unwrap();
 ///
 /// assert_eq!(parsed_ident.to_string(), "fixed_cached_var");
 ///
 /// // Parsing again should retrieve from the cache (even if the input is diffrent)
-/// let (_, cached_ident) = my_parser.parse(Cursor::empty(), &mut cache).unwrap();
+/// let (_, cached_ident) = my_parser.parse(Input::empty(), &mut cache).unwrap();
 /// assert_eq!(cached_ident.to_string(), "fixed_cached_var");
 /// ```
 pub struct CachedComb<'a, INNER,T =(),MESSAGE=&'static str, C = FlexibleCache<'a,T>>
@@ -323,7 +328,7 @@ where
     pub message:MESSAGE,
 
     ///used so we can have generics
-    pub _phantom: PhantomData<(Cursor<'a>, T,C)>,
+    pub _phantom: PhantomData<(Input<'a>, T,C)>,
 }
 
 pub type UsizeCachedComb<'a, INNER,T =(),MESSAGE=&'static str,C = FlexibleCache<'a,T>> = CachedComb<'a,INNER, T ,MESSAGE,C>;
@@ -337,8 +342,8 @@ where
     MESSAGE:Display
 {
 
-    fn parse(&self, input: Cursor<'a>, cache: &mut C) -> Pakerat<(Cursor<'a>, T)> { 
-    	cache.parse_cached(input,self.key,&self.inner,|| {syn::Error::new(input.span(),self.message.to_string())})
+    fn parse(&self, input: Input<'a>, cache: &mut C) -> Pakerat<(Input<'a>, T)> { 
+    	cache.parse_cached(input,self.key,&self.inner,|| {ParseError::Syn(syn::Error::new(input.span(),self.message.to_string()))})
     }
 }
 

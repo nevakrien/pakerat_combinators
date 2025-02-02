@@ -1,3 +1,8 @@
+use crate::core::ParseError;
+use crate::core::Expected;
+use crate::core::Mismatch;
+use crate::core::Found;
+use crate::core::get_start_del;
 use syn::__private::ToTokens;
 use syn::parse::ParseStream;
 use syn::LitInt;
@@ -6,120 +11,18 @@ use syn::Lifetime;
 use proc_macro2::Literal;
 use proc_macro2::Ident;
 use proc_macro2::Punct;
-use std::fmt;
 use crate::combinator::PakeratError;
 use crate::combinator::Combinator;
 use crate::cache::Cache;
 use crate::combinator::Pakerat;
-use proc_macro2::extra::DelimSpan;
-use proc_macro2::Span;
 use proc_macro2::TokenTree;
 use proc_macro2::Delimiter;
-use syn::buffer::Cursor;
+use crate::core::Input;
 
-pub struct DelMark{
-	pub del:Delimiter,
-	pub span:Span
-}
 
-pub enum Found {
-	Spot(Span),
-	End(DelMark),
-	Start(DelMark),
-}
 
-impl Found {
-	pub fn start_of(spot:Cursor) -> Self{
-		match spot.any_group(){
-			Some((_,del,del_span,_)) => Found::Start(DelMark{del,span:del_span.open()}),
-			None => Found::Spot(spot.span())
-		}
-	}
 
-	/// Retrieves the span associated with this `Found` variant.
-    fn span(&self) -> Span {
-        match self {
-            Found::Spot(span) => *span,
-            Found::Start(del_mark) | Found::End(del_mark) => del_mark.span,
-        }
-    }
-}
-
-impl fmt::Display for Found {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Found::Spot(span) => match span.source_text() {
-            	Some(s) => write!(f, "{}",s),
-            	None => write!(f, "<missing source : {:?}>",span),
-            }
-            Found::Start(del_mark) => write!(f, "{}", get_start_del(del_mark.del)),
-            Found::End(del_mark) => write!(f, "{}", get_end_del(del_mark.del)),
-        }
-    }
-}
-
-pub enum Expected {
-	Spot(Span),
-	End(Delimiter),
-	Start(Delimiter),
-}
-
-impl Expected {
-	pub fn start_of(spot:Cursor<'_>) -> Self{
-		match spot.any_group(){
-			Some((_,del,_,_)) => Expected::Start(del),
-			None => Expected::Spot(spot.span())
-		}
-	}
-}
-
-impl fmt::Display for Expected {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Expected::Spot(span) => match span.source_text() {
-            	Some(s) => write!(f, "{}",s),
-            	None => write!(f, "<missing source : {:?}>",span),
-            }
-            Expected::Start(del) => write!(f, "{}", get_start_del(*del)),
-            Expected::End(del) => write!(f, "{}", get_end_del(*del)),
-        }
-    }
-}
-
-pub struct Mismatch{
-	pub actual:Found,
-	pub expected: Expected,
-}
-
-pub fn get_start_del(del:Delimiter) -> &'static str {
-	match del {
-        Delimiter::Parenthesis => "(",
-        Delimiter::Bracket => "[",
-        Delimiter::Brace => "{",
-        Delimiter::None => "<empty delim (likely bug)>",
-    }
-}
-
-pub fn get_end_del(del:Delimiter) -> &'static str {
-	match del {
-        Delimiter::Parenthesis => ")",
-        Delimiter::Bracket => "]",
-        Delimiter::Brace => "}",
-        Delimiter::None => "<EOF>",
-    }
-}
-
-#[allow(clippy::from_over_into)]
-impl Into<syn::Error> for Mismatch {
-    fn into(self) -> syn::Error {
-        let span = self.actual.span(); // Use the actual's span in all cases
-        let msg =  format!("Expected \"{}\" but found \"{}\"", self.expected,self.actual);
-
-        syn::Error::new(span, msg)
-    }
-}
-
-pub fn streams_match<'a,'b>(mut start:Cursor<'b>,end:Cursor<'_>,mut input:Cursor<'a>,del:Delimiter,end_span:Option<&DelimSpan>) -> Result<Cursor<'a>,Mismatch>{
+pub fn streams_match<'a,'b>(mut start:Input<'b>,end:Input<'_>,mut input:Input<'a>) -> Result<Input<'a>,Mismatch>{
 	while start!=end {
 		let (new_start,a) = match start.token_tree() {
 			None => break,
@@ -129,10 +32,16 @@ pub fn streams_match<'a,'b>(mut start:Cursor<'b>,end:Cursor<'_>,mut input:Cursor
 		};
 
 		let (new_input,b) = match input.token_tree() {
-			None => return Err(Mismatch{
-				expected: Expected::Spot(start.span()),
-				actual:Found::End(DelMark{del,span:end_span.map(|x| x.close()).unwrap_or_else(|| input.span())})
-			}),
+			None => {
+				let actual = match input.block_end(){
+					Some(del_mark) =>Found::End(del_mark),
+					None=>Found::EOF(input.end_span()),
+				};
+				return Err(Mismatch{
+					expected: Expected::Spot(start.span()),
+					actual
+				})
+			},
 			Some((tree,spot)) => {
 				(spot,tree)
 			}
@@ -144,11 +53,11 @@ pub fn streams_match<'a,'b>(mut start:Cursor<'b>,end:Cursor<'_>,mut input:Cursor
 			(TokenTree::Literal(x),TokenTree::Literal(y)) => x.to_string()==y.to_string(),
 			(TokenTree::Group(_),TokenTree::Group(_)) => {
 				let (a,del_a,_,_) = start.any_group().unwrap();
-				let (b,del_b,del_span,_) = input.any_group().unwrap();
+				let (b,del_b,_,_) = input.any_group().unwrap();
 				if del_a!=del_b {
 					false
 				}else{
-					let remaining = streams_match(a,end,b,del_b,Some(&del_span))?;
+					let remaining = streams_match(a,end,b)?;
 					if !remaining.eof() {
 						return Err(
 							Mismatch{
@@ -173,7 +82,7 @@ pub fn streams_match<'a,'b>(mut start:Cursor<'b>,end:Cursor<'_>,mut input:Cursor
 	Ok(input)
 }
 
-// pub fn streams_just_match<'a>(mut start:Cursor<'_>,end:Cursor<'_>,mut input:Cursor<'a>) -> Result<Cursor<'a>,DumbyError>{
+// pub fn streams_just_match<'a>(mut start:Input<'_>,end:Input<'_>,mut input:Input<'a>) -> Result<Input<'a>,DumbyError>{
 // 	while start!=end {
 // 		let (new_start,a) = match start.token_tree() {
 // 			None => break,
@@ -221,42 +130,47 @@ pub fn streams_match<'a,'b>(mut start:Cursor<'b>,end:Cursor<'_>,mut input:Cursor
 // }
 #[derive(Clone,Copy)]
 pub struct MatchParser<'b>{
-	pub start:Cursor<'b>,
-	pub end:Cursor<'b>
+	pub start:Input<'b>,
+	pub end:Input<'b>
 }
 
 
 impl<'a, O:Clone,C: Cache<'a, O>> Combinator<'a, (),O,C> for MatchParser<'_>{
-	fn parse(&self, input: Cursor<'a>,_state: &mut C) -> Pakerat<(Cursor<'a>,())>{
-		let ans = streams_match(self.start,self.end,input,Delimiter::None,None)
-			.map_err(|e| PakeratError::Regular(e.into()))?;
+	fn parse(&self, input: Input<'a>,_state: &mut C) -> Pakerat<(Input<'a>,())>{
+		let ans = streams_match(self.start,self.end,input)
+			.map_err(|e| PakeratError::<ParseError>::Regular(e.into()))?;
 		Ok((ans,()))
 	}
 }
 
 macro_rules! define_parser {
-    ($name:ident, $output:ty, $method:ident, $syn_err_msg:expr) => {
+    ($name:ident, $output:ty, $method:ident, $expected:expr) => {
         #[derive(Debug, Clone, Copy, PartialEq)]
         pub struct $name;
 
-        impl<'a, O:Clone,C: Cache<'a, O>> Combinator<'a, $output,O,C> for $name {
+        impl<'a, O: Clone, C: Cache<'a, O>> Combinator<'a, $output, O, C> for $name {
             #[inline]
-            fn parse(&self, input: Cursor<'a>, _state: &mut C) -> Pakerat<(Cursor<'a>, $output), syn::Error> {
+            fn parse(&self, input: Input<'a>, _state: &mut C) -> Pakerat<(Input<'a>, $output)> {
                 if let Some((x, ans)) = input.$method() {
                     Ok((ans, x))
                 } else {
-                    Err(PakeratError::Regular(syn::Error::new(input.span(), $syn_err_msg)))
+                    Err(PakeratError::Regular(ParseError::Simple(Mismatch {
+                        actual: Found::start_of(input),
+                        expected: Expected::Text($expected),
+                    })))
                 }
             }
         }
     };
 }
 
-define_parser!(AnyParser, TokenTree, token_tree, "unexpected EOF");
-define_parser!(PunctParser, Punct, punct, "expected one of +-=?;.*&^%$#@!...");
-define_parser!(IdentParser, Ident, ident, "expected a name");
-define_parser!(LiteralParser, Literal, literal, "expected a literal (string char int etc)");
-define_parser!(LifetimeParser, Lifetime, lifetime, "expected a lifetime");
+// Define the parsers using the updated macro
+define_parser!(AnyParser, TokenTree, token_tree, "any token");
+define_parser!(PunctParser, Punct, punct, "one of +-=?;.*&^%$#@!...");
+define_parser!(IdentParser, Ident, ident, "a name");
+define_parser!(LiteralParser, Literal, literal, "a literal (string, char, int, etc.)");
+define_parser!(LifetimeParser, Lifetime, lifetime, "a lifetime");
+
 
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -273,12 +187,16 @@ impl Parse for BasicInt {
 }
 
 impl<'a, O:Clone,C: Cache<'a, O>> Combinator<'a, i64,O,C> for NumParser{
-	fn parse(&self, input: Cursor<'a>,_state: &mut C) -> Pakerat<(Cursor<'a>,i64), syn::Error>{
-		if let Some((x, cursor)) = input.literal() {
+	fn parse(&self, input: Input<'a>,_state: &mut C) -> Pakerat<(Input<'a>,i64)>{
+		if let Some((x, new_input)) = input.literal() {
             let i : BasicInt = syn:: parse2(x.into_token_stream()).map_err(PakeratError::Regular)?;
-            Ok((cursor,i.0))
+            Ok((new_input,i.0))
         } else {
-            Err(PakeratError::Regular(syn::Error::new(input.span(), "expected an integer")))
+            Err(PakeratError::Regular(ParseError::Simple(
+            	Mismatch{
+            		actual:Found::start_of(input),
+            		expected:Expected::Text("integer")
+            	})))
         }
 	}
 }
@@ -288,13 +206,17 @@ impl<'a, O:Clone,C: Cache<'a, O>> Combinator<'a, i64,O,C> for NumParser{
 pub struct DelParser(pub Delimiter);
 
 
-impl<'a, O:Clone,C: Cache<'a, O>> Combinator<'a, Cursor<'a>,O,C> for DelParser {
+impl<'a, O:Clone,C: Cache<'a, O>> Combinator<'a, Input<'a>,O,C> for DelParser {
     #[inline]
-    fn parse(&self, input: Cursor<'a>, _state: &mut C) -> Pakerat<(Cursor<'a>, Cursor<'a>), syn::Error>{
+    fn parse(&self, input: Input<'a>, _state: &mut C) -> Pakerat<(Input<'a>, Input<'a>)>{
         if let Some((x,_span, next)) = input.group(self.0) {
             Ok((next, x))
         } else {
-            Err(PakeratError::Regular(syn::Error::new(input.span(),format!("expected {}",get_start_del(self.0)))))
+            Err(PakeratError::Regular(ParseError::Simple(
+            	Mismatch{
+            		actual:Found::start_of(input),
+            		expected:Expected::End(self.0)
+            	})))
         }
     }
 }
@@ -302,13 +224,17 @@ impl<'a, O:Clone,C: Cache<'a, O>> Combinator<'a, Cursor<'a>,O,C> for DelParser {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct AnyDelParser;
 
-impl<'a, O:Clone,C: Cache<'a, O>> Combinator<'a, Cursor<'a>,O,C> for AnyDelParser {
+impl<'a, O:Clone,C: Cache<'a, O>> Combinator<'a, Input<'a>,O,C> for AnyDelParser {
     #[inline]
-    fn parse(&self, input: Cursor<'a>, _state: &mut C) -> Pakerat<(Cursor<'a>, Cursor<'a>), syn::Error>{
+    fn parse(&self, input: Input<'a>, _state: &mut C) -> Pakerat<(Input<'a>, Input<'a>)>{
         if let Some((x,_,_, next)) = input.any_group() {
             Ok((next, x))
         } else {
-            Err(PakeratError::Regular(syn::Error::new(input.span(),"expected one of '{[('")))
+            Err(PakeratError::Regular(ParseError::Simple(
+            	Mismatch{
+            		actual:Found::start_of(input),
+            		expected:Expected::Text("one of ({[")
+            	})))
         }
     }
 }
@@ -320,15 +246,15 @@ use crate::cache::BasicCache;
 use std::collections::HashMap;
 use super::*;
     use proc_macro2::TokenStream;
-    use syn::buffer::{Cursor, TokenBuffer};
+    use syn::buffer::{TokenBuffer};
     
 
-    /// Macro to safely create a `TokenBuffer` and `Cursor` with a proper lifetime.
+    /// Macro to safely create a `TokenBuffer` and `Input` with a proper lifetime.
     macro_rules! token_cursor {
         ($name:ident, $input:expr) => {
             let tokens: TokenStream = $input.parse().unwrap(); // Unwrap directly for clearer failure
             let buffer = TokenBuffer::new2(tokens); // Keep buffer alive
-            let $name = buffer.begin(); // Extract cursor
+            let $name = Input::new(&buffer); // Extract Input
         };
     }
 
@@ -336,7 +262,7 @@ use super::*;
     fn match_parser_exact_match_dumby_error() {
         token_cursor!(buffer1, "let x = 42;");
         token_cursor!(buffer2, "let x = 42;");
-        let parser = MatchParser { start: buffer1, end: Cursor::empty() };
+        let parser = MatchParser { start: buffer1, end: Input::empty() };
 
         let mut cache: BasicCache<0> = HashMap::new();
 
@@ -348,7 +274,7 @@ use super::*;
     fn match_parser_exact_match_syn_error() {
         token_cursor!(buffer1, "let x = 42;");
         token_cursor!(buffer2, "let x = 42;");
-        let parser = MatchParser { start: buffer1, end: Cursor::empty() };
+        let parser = MatchParser { start: buffer1, end: Input::empty() };
 
         let mut cache: BasicCache<0> = HashMap::new();
 
@@ -361,7 +287,7 @@ use super::*;
     fn match_parser_subset_should_pass() {
         token_cursor!(buffer1, "let x = 42;");
         token_cursor!(buffer2, "let x = 42; let y = 10;");
-        let parser = MatchParser { start: buffer1, end: Cursor::empty() };
+        let parser = MatchParser { start: buffer1, end: Input::empty() };
 
         let mut cache: BasicCache<0> = HashMap::new();
 
@@ -376,7 +302,7 @@ use super::*;
     fn match_parser_mismatch_dumby_error() {
         token_cursor!(buffer1, "let x = 42;");
         token_cursor!(buffer2, "let x = 43;");
-        let parser = MatchParser { start: buffer1, end: Cursor::empty() };
+        let parser = MatchParser { start: buffer1, end: Input::empty() };
 
         let mut cache: BasicCache<0> = HashMap::new();
 
@@ -388,7 +314,7 @@ use super::*;
     fn match_parser_mismatch_syn_error() {
         token_cursor!(buffer1, "let x = 42;");
         token_cursor!(buffer2, "let x = 43;");
-        let parser = MatchParser { start: buffer1, end: Cursor::empty() };
+        let parser = MatchParser { start: buffer1, end: Input::empty() };
 
         let mut cache: BasicCache<0> = HashMap::new();
 
@@ -400,7 +326,7 @@ use super::*;
     fn match_parser_incomplete_input_dumby_error() {
         token_cursor!(buffer1, "let x = 42;");
         token_cursor!(buffer2, "let x =");
-        let parser = MatchParser { start: buffer1, end: Cursor::empty() };
+        let parser = MatchParser { start: buffer1, end: Input::empty() };
 
         let mut cache: BasicCache<0, ()> = HashMap::new();
 
@@ -413,7 +339,7 @@ use super::*;
     fn match_parser_incomplete_input_syn_error() {
         token_cursor!(buffer1, "let x = 42;");
         token_cursor!(buffer2, "let x =");
-        let parser = MatchParser { start: buffer1, end: Cursor::empty() };
+        let parser = MatchParser { start: buffer1, end: Input::empty() };
 
         let mut cache: BasicCache<0> = HashMap::new();
 
@@ -425,7 +351,7 @@ use super::*;
     fn match_parser_extra_tokens_fail() {
         token_cursor!(buffer1, "let x = 42;");
         token_cursor!(buffer2, "let x = 42; let y = 10; let z = 20;");
-        let parser = MatchParser { start: buffer2, end: Cursor::empty() }; // Reverse case: expected is longer
+        let parser = MatchParser { start: buffer2, end: Input::empty() }; // Reverse case: expected is longer
 
         let mut cache: BasicCache<0> = HashMap::new();
 
@@ -438,18 +364,18 @@ use super::*;
 	    token_cursor!(buffer, "let x = 42; let y = 10;");
 	    
 	    let start = buffer;
-	    let mut cursor = buffer;
+	    let mut input = buffer;
 	    
-	    // Move forward to get a valid end cursor
+	    // Move forward to get a valid end Input
 	    for _ in 0..3 {
-	        if let Some((_, next_cursor)) = cursor.token_tree() {
-	            cursor = next_cursor;
+	        if let Some((_, next_cursor)) = input.token_tree() {
+	            input = next_cursor;
 	        } else {
-	            panic!("Failed to advance cursor within the same buffer.");
+	            panic!("Failed to advance Input within the same buffer.");
 	        }
 	    }
 	    
-	    let end = cursor; // This should point to the position after `42;`
+	    let end = input; // This should point to the position after `42;`
 	    
 	    let parser = MatchParser { start, end };
 
@@ -457,10 +383,10 @@ use super::*;
 
 	    let (remaining, _) = parser.parse(buffer, &mut cache).unwrap();
 
-	    // The parser should succeed, and the final cursor should match `end`
+	    // The parser should succeed, and the final Input should match `end`
 	    assert!(
 	        remaining == end,
-	        "Expected the remaining cursor to be at `end`, but it was somewhere else."
+	        "Expected the remaining Input to be at `end`, but it was somewhere else."
 	    );
 	}
 

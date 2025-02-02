@@ -1,8 +1,10 @@
+
+use crate::core::ParseError;
 use crate::cache::FlexibleCache;
 // use crate::cache::CacheExt;
 use std::error::Error;
 use crate::cache::Cache;
-use syn::buffer::Cursor;
+use crate::core::Input;
 
 // #[derive(Debug,Clone)]
 // pub enum ParseError{
@@ -22,7 +24,7 @@ use syn::buffer::Cursor;
 ///
 ///as well as program panics on bad parses (this was chosen over errors to avoid corupted states).
 #[derive(Debug,Clone)]
-pub enum PakeratError<E=syn::Error> where E: Clone+Error,{
+pub enum PakeratError<E=ParseError> where E: Clone+Error,{
     ///these are the errors most user code should generate
     ///
     ///dont construct these from a recursive error
@@ -50,8 +52,13 @@ impl<E: Error + std::clone::Clone> PakeratError<E>{
     }
 
 }
+
+impl From<PakeratError<syn::Error>> for PakeratError<ParseError>{
+
+fn from(e: PakeratError<syn::Error>) -> Self { e.map(|x| x.into())}
+}
 ///result type used for internal cache managment
-pub type Pakerat<T,E = syn::Error> = Result<T,PakeratError<E>>;
+pub type Pakerat<T,E = ParseError> = Result<T,PakeratError<E>>;
 
 
 // Implement Clone when `E: Clone`
@@ -69,8 +76,8 @@ fn eq(&self, other: &PakeratError<E>) -> bool {
 
 
 pub trait Combinator<'a, T = (), O: Clone = T, C: Cache<'a, O> = FlexibleCache<'a,T>> {
-    fn parse(&self, input: Cursor<'a>, state: &mut C) -> Pakerat<(Cursor<'a>, T)>;
-    fn parse_ignore(&self, input: Cursor<'a>,state: &mut C) -> Pakerat<Cursor<'a>>{
+    fn parse(&self, input: Input<'a>, state: &mut C) -> Pakerat<(Input<'a>, T)>;
+    fn parse_ignore(&self, input: Input<'a>,state: &mut C) -> Pakerat<Input<'a>>{
         let (ans,_) = self.parse(input,state)?;
         Ok(ans)
     }
@@ -87,17 +94,17 @@ macro_rules! impl_combinator_for_wrappers {
         {
             fn parse(
                 &self,
-                input: Cursor<'b>,
+                input: Input<'b>,
                 cache: &mut C,
-            ) -> Pakerat<(Cursor<'b>, T)> {
+            ) -> Pakerat<(Input<'b>, T)> {
                 (**self).parse(input, cache) // Delegate to the inner trait object
             }
 
             fn parse_ignore(
                 &self,
-                input: Cursor<'b>,
+                input: Input<'b>,
                 cache: &mut C,
-            ) -> Pakerat<Cursor<'b>> {
+            ) -> Pakerat<Input<'b>> {
                 (**self).parse_ignore(input, cache)
             }
         }
@@ -117,11 +124,11 @@ impl_combinator_for_wrappers!(Arc<dyn Combinator<'b, T, O, C>>);
 // Implementing for function-like types
 impl<'a, F, T, O, C> Combinator<'a, T, O, C> for F
 where
-    F: Fn(Cursor<'a>, &mut C) -> Pakerat<(Cursor<'a>, T)>,
+    F: Fn(Input<'a>, &mut C) -> Pakerat<(Input<'a>, T)>,
     C: Cache<'a, O>,
     O: Clone,
 {
-    fn parse(&self, input: Cursor<'a>, state: &mut C) -> Pakerat<(Cursor<'a>, T)> {
+    fn parse(&self, input: Input<'a>, state: &mut C) -> Pakerat<(Input<'a>, T)> {
         (self)(input, state)
     }
 }
@@ -132,7 +139,7 @@ fn test_closures() {
     use std::marker::PhantomData;
 
 
-    fn example_parser<'a>(input: Cursor<'a>, _state: &mut FlexibleCache<'a>) -> Pakerat<(Cursor<'a>, ())> {
+    fn example_parser<'a>(input: Input<'a>, _state: &mut FlexibleCache<'a>) -> Pakerat<(Input<'a>, ())> {
         Ok((input, ()))
     }
 
@@ -152,11 +159,13 @@ fn test_closures() {
 
 #[test]
 fn test_dyn_closure_combinator_error_mapping() {
+    
+    
     use syn::buffer::TokenBuffer;
 
     // A simple parser that always fails with a Regular error
-    fn failing_parser<'a>(input: Cursor<'a>, _state: &mut FlexibleCache<'a>) -> Pakerat<(Cursor<'a>, ())> {
-        Err(PakeratError::Regular(syn::Error::new(input.span(), "Inner parser error")))
+    fn failing_parser<'a>(input: Input<'a>, _state: &mut FlexibleCache<'a>) -> Pakerat<(Input<'a>, ())> {
+        Err(PakeratError::Regular(ParseError::Message(input.span(),"Inner parser error")))
     }
 
     // Create token buffer first so its dropped last
@@ -165,12 +174,13 @@ fn test_dyn_closure_combinator_error_mapping() {
 
     // make a closure that wraps `failing_parser`(we need a helper function so that the lifetimes work like we want)
     fn make_combinator<'b>() ->  Box<dyn Combinator<'b, (), (), FlexibleCache<'b, ()>>>{
-        Box::new(move  |input: Cursor<'b>, cache: &mut FlexibleCache<'b, ()>| {
+        Box::new(move  |input: Input<'b>, cache: &mut FlexibleCache<'b, ()>| {
             failing_parser(input, cache).map_err(move |e| {
-                e.map(|inner| {
-                    let mut err = syn::Error::new(inner.span(),"failed doing something");
-                    err.combine(inner);
-                    err
+                e.map(|e| {
+                    let err:syn::Error = e.into();
+                    let mut new_err = syn::Error::new(err.span(),"failed doing something");
+                    new_err.combine(err);
+                    ParseError::Syn(new_err)
                 })
             }) 
         })
@@ -182,7 +192,7 @@ fn test_dyn_closure_combinator_error_mapping() {
     let mut cache = FlexibleCache::< ()>::default();
     {
         // Run the parser
-        let result = error_mapping_combinator.parse(buffer.begin(), &mut cache);
+        let result = error_mapping_combinator.parse(Input::new(&buffer), &mut cache);
 
         // Verify that the error was transformed
         if let Err(PakeratError::Regular(e)) = result {
@@ -195,12 +205,12 @@ fn test_dyn_closure_combinator_error_mapping() {
 
 
 pub struct CodeRef<'a>{
-    pub start:Cursor<'a>,
-    pub end:Cursor<'a>,
+    pub start:Input<'a>,
+    pub end:Input<'a>,
 }
 
 pub trait CombinatorExt<'a, T,O:Clone ,C: Cache<'a, O>> : Combinator<'a, T,O,C>{
-    fn parse_recognize(&self, input: Cursor<'a>,state: &mut C) -> Pakerat<CodeRef<'a>>{
+    fn parse_recognize(&self, input: Input<'a>,state: &mut C) -> Pakerat<CodeRef<'a>>{
         Ok(CodeRef{
             start:input,
             end: self.parse_ignore(input,state)?,
@@ -211,9 +221,9 @@ pub trait CombinatorExt<'a, T,O:Clone ,C: Cache<'a, O>> : Combinator<'a, T,O,C>{
         make(self)
     }
 
-    fn parse_into<V :From<T>,E2:Error + From<PakeratError>>(&self, input: Cursor<'a>,state: &mut C) -> Result<(Cursor<'a>, V), E2>{
-        let (cursor,t) = self.parse(input,state)?;
-        Ok((cursor,t.into()))
+    fn parse_into<V :From<T>,E2:Error + From<PakeratError>>(&self, input: Input<'a>,state: &mut C) -> Result<(Input<'a>, V), E2>{
+        let (input,t) = self.parse(input,state)?;
+        Ok((input,t.into()))
     }
 
 }
