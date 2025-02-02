@@ -904,8 +904,8 @@ where
         input: Input<'a>,
         cache: &mut C,
     ) -> Pakerat<Input<'a>> {
-        let (next, _) = self.first.parse(input, cache)?;
-        let (remaining, _) = self.second.parse(next, cache)?;
+        let next = self.first.parse_ignore(input, cache)?;
+        let remaining = self.second.parse_ignore(next, cache)?;
 
         Ok(remaining)
     }
