@@ -458,8 +458,10 @@ where
     B: Combinator<'a, T, O, C>,
     O: Clone,
     C: Cache<'a, O>,
-{
+{   
+    ///first element
     pub a: A,
+    ///second element
     pub b: B,
     pub _phantom: PhantomData<(Input<'a>,T, O, C)>,
 }
@@ -486,6 +488,15 @@ where
             Err(PakeratError::Regular(_)) => self.b.parse_ignore(input, cache),
         }
     }
+}
+impl<'a, A, B, T, O, C> OrLast<'a, A, B, T, O, C>
+where
+    A: Combinator<'a, T, O, C>,
+    B: Combinator<'a, T, O, C>,
+    O: Clone,
+    C: Cache<'a, O>,
+{
+    pub fn new(a:A,b:B) -> Self { OrLast{a,b,_phantom:PhantomData} }
 }
 
 /// Wraps a parser to provide a **custom error message** if parsing fails.
@@ -560,6 +571,17 @@ where
                 Err(PakeratError::Regular(ParseError::Message(input.span(), self.err_msg)))
             }
         }
+    }
+}
+
+impl<'a, P, T, O, C> ErrorWrapper<'a, P, T, O, C>
+where
+    P: Combinator<'a, T, O, C>,
+    O: Clone,
+    C: Cache<'a, O>,
+{
+    pub fn new(parser:P,err_msg: &'static str) -> Self{
+        ErrorWrapper{parser,err_msg,_phantom:PhantomData}
     }
 }
 
@@ -807,6 +829,100 @@ where
     }
 }
 
+/// A `Pair` combinator that applies two parsers sequentially.
+///
+/// This combinator runs the first parser (`first`) and, if it succeeds, 
+/// applies the second parser (`second`) to the remaining input. 
+/// If both parsers succeed, it returns a tuple `(A, B)`, where:
+/// - `A` is the output of the first parser.
+/// - `B` is the output of the second parser.
+///
+/// This is useful when parsing structured data where elements appear in sequence.
+///
+/// # Example
+///
+/// ```rust
+/// use pakerat_combinators::combinator::Combinator;
+/// use pakerat_combinators::multi::Pair;
+/// use pakerat_combinators::basic_parsers::{IdentParser, IntParser};
+/// use pakerat_combinators::cache::BasicCache;
+/// use pakerat_combinators::core::Input;
+/// use std::marker::PhantomData;
+/// use syn::buffer::TokenBuffer;
+///
+/// let tokens = "my_var 42".parse().unwrap();
+/// let buffer = TokenBuffer::new2(tokens);
+/// let input = Input::new(&buffer);
+///
+/// let my_parser = Pair {
+///     first: IdentParser,
+///     second: IntParser,
+///     _phantom: PhantomData,
+/// };
+///
+/// let mut cache = BasicCache::<0>::new();
+/// let (_, (ident, number)) = my_parser.parse(input, &mut cache).unwrap();
+/// assert_eq!(ident.to_string(), "my_var");
+/// assert_eq!(number, 42);
+/// ```
+pub struct Pair<'b, FIRST, SECOND, T1, T2, O, C = FlexibleCache<'b, O>>
+where
+    FIRST: Combinator<'b, T1, O, C>,
+    SECOND: Combinator<'b, T2, O, C>,
+    O: Clone,
+    C: Cache<'b, O>,
+{
+    /// First parser to apply.
+    pub first: FIRST,
+    /// Second parser to apply.
+    pub second: SECOND,
+    /// Used for generic type binding.
+    pub _phantom: PhantomData<(Input<'b>, T1, T2, O, C)>,
+}
+
+impl<'a, FIRST, SECOND, T1, T2, O, C> Combinator<'a, (T1, T2), O, C>
+    for Pair<'a, FIRST, SECOND, T1, T2, O, C>
+where
+    FIRST: Combinator<'a, T1, O, C>,
+    SECOND: Combinator<'a, T2, O, C>,
+    O: Clone,
+    C: Cache<'a, O>,
+{
+    fn parse(
+        &self,
+        input: Input<'a>,
+        cache: &mut C,
+    ) -> Pakerat<(Input<'a>, (T1, T2))> {
+        let (next, first_result) = self.first.parse(input, cache)?;
+        let (remaining, second_result) = self.second.parse(next, cache)?;
+
+        Ok((remaining, (first_result, second_result)))
+    }
+
+    fn parse_ignore(
+        &self,
+        input: Input<'a>,
+        cache: &mut C,
+    ) -> Pakerat<Input<'a>> {
+        let (next, _) = self.first.parse(input, cache)?;
+        let (remaining, _) = self.second.parse(next, cache)?;
+
+        Ok(remaining)
+    }
+}
+
+
+impl<'a, FIRST, SECOND, T1, T2, O, C>Pair<'a, FIRST, SECOND, T1, T2, O, C>
+where
+    FIRST: Combinator<'a, T1, O, C>,
+    SECOND: Combinator<'a, T2, O, C>,
+    O: Clone,
+    C: Cache<'a, O>
+{
+    pub fn new(first:FIRST,second:SECOND) -> Self{
+        Pair{first,second,_phantom:PhantomData}
+    }
+}
 
 #[cfg(test)]
 mod tests {
