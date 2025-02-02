@@ -415,11 +415,406 @@ where
     }
 }
 
+/// A combinator that tries `A` first, then falls back to `B` if `A` fails.
+///
+/// This combinator does **not** provide a good error message!  
+/// If both `A` and `B` fail, it **only returns the error from `B`**,  
+/// rather than a meaningful message that explains what was expected.  
+///
+/// This is usually fixed by using [`ErrorWrapper`] right after to provide better error messages.
+///
+/// This struct is used **internally** as a building block for [`one_of!`]  
+/// to ensure optimal static dispatch. It is generally not recommended for direct use.
+///
+/// [`ErrorWrapper`]: crate::multi::ErrorWrapper  
+/// [`one_of!`]: crate::one_of
+/// # Example
+/// ```rust
+/// use pakerat_combinators::multi::{OrLast,Ignore};
+/// use pakerat_combinators::basic_parsers::IdentParser;
+/// use pakerat_combinators::basic_parsers::LiteralParser;
+/// use pakerat_combinators::combinator::Combinator;
+/// use pakerat_combinators::cache::BasicCache;
+/// use pakerat_combinators::core::Input;
+/// use syn::buffer::TokenBuffer;
+///
+/// let tokens = "my_var rest".parse().unwrap();
+/// let buffer = TokenBuffer::new2(tokens);
+/// let input = Input::new(&buffer);
+///
+/// let parser = OrLast {
+///     a: Ignore::new(IdentParser),
+///     b: Ignore::new(LiteralParser),
+///     _phantom: std::marker::PhantomData,
+/// };
+///
+/// let mut cache = BasicCache::<0>::new();
+/// let next = parser.parse_ignore(input, &mut cache).unwrap();
+/// assert_eq!(next.span().source_text(), Some("rest".to_string()));
+/// ```
+pub struct OrLast<'a,A, B, T = (), O = T, C = FlexibleCache<'a, T>>
+where
+    A: Combinator<'a, T, O, C>,
+    B: Combinator<'a, T, O, C>,
+    O: Clone,
+    C: Cache<'a, O>,
+{
+    pub a: A,
+    pub b: B,
+    pub _phantom: PhantomData<(Input<'a>,T, O, C)>,
+}
+
+impl<'a, A, B, T, O, C> Combinator<'a, T, O, C> for OrLast<'a, A, B, T, O, C>
+where
+    A: Combinator<'a, T, O, C>,
+    B: Combinator<'a, T, O, C>,
+    O: Clone,
+    C: Cache<'a, O>,
+{
+    fn parse(&self, input: Input<'a>, cache: &mut C) -> Pakerat<(Input<'a>, T)> {
+        match self.a.parse(input, cache) {
+            ok @ Ok(_) => ok,
+            Err(PakeratError::Recursive(e)) => Err(PakeratError::Recursive(e)),
+            Err(PakeratError::Regular(_)) => self.b.parse(input, cache),
+        }
+    }
+
+    fn parse_ignore(&self, input: Input<'a>, cache: &mut C) -> Pakerat<Input<'a>> {
+        match self.a.parse_ignore(input, cache) {
+            ok @ Ok(_) => ok,
+            Err(PakeratError::Recursive(e)) => Err(PakeratError::Recursive(e)),
+            Err(PakeratError::Regular(_)) => self.b.parse_ignore(input, cache),
+        }
+    }
+}
+
+/// Wraps a parser to provide a **custom error message** if parsing fails.
+///
+/// This combinator ensures that the user **always gets a clear error message** instead of an
+/// ambiguous default one. This is used internally by `one_of!` to ensure meaningful errors.
+///
+/// # Example
+/// ```rust
+/// use pakerat_combinators::multi::ErrorWrapper;
+/// use pakerat_combinators::basic_parsers::IdentParser;
+/// use pakerat_combinators::combinator::{Combinator, PakeratError};
+/// use pakerat_combinators::cache::BasicCache;
+/// use pakerat_combinators::core::{Input, ParseError};
+/// use syn::buffer::TokenBuffer;
+///
+/// let tokens = "123".parse().unwrap();
+/// let buffer = TokenBuffer::new2(tokens);
+/// let input = Input::new(&buffer);
+///
+/// let parser = ErrorWrapper {
+///     parser: IdentParser,
+///     err_msg: "expected an identifier",
+///     _phantom: std::marker::PhantomData,
+/// };
+///
+/// let mut cache = BasicCache::<0>::new();
+/// let result = parser.parse(input, &mut cache);
+///
+/// match result {
+///     Err(PakeratError::Regular(ParseError::Message(_, msg))) => {
+///         assert_eq!(msg, "expected an identifier");
+///     }
+///     _ => panic!("Expected a `ParseError::Message` with the correct error text"),
+/// }
+/// ```
+pub struct ErrorWrapper<'a, P, T = (), O = T, C = FlexibleCache<'a, T>>
+where
+    P: Combinator<'a, T, O, C>,
+    O: Clone,
+    C: Cache<'a, O>,
+{
+    /// The internal parser to be wrapped.
+    pub parser: P,
+    /// The custom error message to be used if parsing fails.
+    pub err_msg: &'static str,
+    /// Phantom data to tie lifetimes and types together.
+    pub _phantom: PhantomData<(Input<'a>, T, O, C)>,
+}
+
+impl<'a, P, T, O, C> Combinator<'a, T, O, C> for ErrorWrapper<'a, P, T, O, C>
+where
+    P: Combinator<'a, T, O, C>,
+    O: Clone,
+    C: Cache<'a, O>,
+{
+    fn parse(&self, input: Input<'a>, cache: &mut C) -> Pakerat<(Input<'a>, T)> {
+        match self.parser.parse(input, cache) {
+            Ok((next_input, result)) => Ok((next_input, result)),
+            Err(PakeratError::Recursive(e)) => Err(PakeratError::Recursive(e)),
+            Err(PakeratError::Regular(_)) => {
+                Err(PakeratError::Regular(ParseError::Message(input.span(), self.err_msg)))
+            }
+        }
+    }
+
+    fn parse_ignore(&self, input: Input<'a>, cache: &mut C) -> Pakerat<Input<'a>> {
+        match self.parser.parse_ignore(input, cache) {
+            Ok(next_input) => Ok(next_input),
+            Err(PakeratError::Recursive(e)) => Err(PakeratError::Recursive(e)),
+            Err(PakeratError::Regular(_)) => {
+                Err(PakeratError::Regular(ParseError::Message(input.span(), self.err_msg)))
+            }
+        }
+    }
+}
+
+/// Creates an optimal **statically dispatched** `OneOf` parser using [`OrLast`] chains.
+///
+/// This macro generates the most efficient possible chain of parsers using [`OrLast`],
+/// and **wraps the final result in [`ErrorWrapper`]** to ensure a **good error message**.
+///
+/// ## **Important Notes:**
+/// - The provided parsers **must** share an output type.  
+/// - The easiest way to ensure this is by using [`Ignore::new(Parser)`] to make the output `()`.  
+/// - This macro **does not use dynamic dispatch**; it expands into a **fully static** chain.
+///
+/// # Example
+/// ```rust
+/// use pakerat_combinators::one_of;
+/// use pakerat_combinators::multi::Ignore;
+/// use pakerat_combinators::basic_parsers::{IdentParser, PunctParser, IntParser};
+/// use pakerat_combinators::combinator::Combinator;
+/// use pakerat_combinators::cache::BasicCache;
+/// use pakerat_combinators::core::Input;
+/// use syn::buffer::TokenBuffer;
+///
+/// let tokens = "my_var rest".parse().unwrap();
+/// let buffer = TokenBuffer::new2(tokens);
+/// let input = Input::new(&buffer);
+///
+/// let parser = one_of!("expected an identifier, an integer, or punctuation",
+///     Ignore::new(IdentParser),
+///     Ignore::new(IntParser),
+///     Ignore::new(PunctParser)
+/// );
+///
+/// let mut cache = BasicCache::<0>::new();
+/// let next = parser.parse_ignore(input, &mut cache).unwrap();
+/// assert_eq!(next.span().source_text(), Some("rest".to_string()));
+/// ```
+///
+/// ## ⚠ **Potential Pitfall: Ordering Matters!**
+/// `one_of!` **selects the first parser that succeeds**, meaning that if an earlier parser is too permissive,  
+/// later parsers may **never get a chance to execute**.
+///
+/// - If `Maybe::new(IdentParser)` is **first**, it **always matches** (even when empty),
+///   preventing `IntParser` or `PunctParser` from ever running.
+/// - **Solution:** **Order your parsers carefully** to avoid unintentional behavior.
+///
+/// ### **Example: Parser Ordering Issue**
+///
+/// ```rust
+/// use pakerat_combinators::one_of;
+/// use pakerat_combinators::multi::{Ignore, Maybe};
+/// use pakerat_combinators::basic_parsers::{IdentParser, PunctParser, IntParser};
+/// use pakerat_combinators::combinator::Combinator;
+/// use pakerat_combinators::cache::BasicCache;
+/// use pakerat_combinators::core::Input;
+/// use syn::buffer::TokenBuffer;
+///
+/// let tokens = "123 rest".parse().unwrap();
+/// let buffer = TokenBuffer::new2(tokens);
+/// let input = Input::new(&buffer);
+///
+/// // ❌ The first parser (Maybe::new(IdentParser)) **always matches**, so IntParser and PunctParser are never checked.
+/// let parser = one_of!("expected an identifier, an integer, or punctuation",
+///     Ignore::new(Maybe::new(IdentParser)), // <-- This **always matches**, so the next parsers are ignored.
+///     Ignore::new(IntParser),  // <-- Never executed.
+///     Ignore::new(PunctParser) // <-- Never executed.
+/// );
+///
+/// let mut cache = BasicCache::<0>::new();
+/// let next = parser.parse_ignore(input, &mut cache).unwrap();
+///
+/// // Since `Maybe(IdentParser)` matched, the input **did not advance** as expected.
+/// assert_eq!(next.span().source_text(), Some("123".to_string())); 
+/// ```
+///
+/// ## **🔧 How to Fix This Issue**
+///
+/// **To ensure `IntParser` and `PunctParser` get checked**, place `Maybe` **after** more restrictive parsers:
+///
+/// ```rust,ignore
+/// let parser = one_of!("expected an identifier, an integer, or punctuation",
+///     Ignore::new(IntParser),   // <-- Tries to match an integer first.
+///     Ignore::new(PunctParser), // <-- Tries punctuation next.
+///     Ignore::new(Maybe::new(IdentParser)) // <-- Only tries identifier if the first two fail.
+/// );
+/// ```
+///
+/// [`OrLast`]: crate::multi::OrLast
+/// [`ErrorWrapper`]: crate::multi::ErrorWrapper
+
+#[macro_export]
+macro_rules! one_of {
+    ($err:expr, $first:expr $(, $rest:expr)+ $(,)?) => {
+        $crate::multi::ErrorWrapper {
+            parser: $crate::__one_of_internal!($first $(, $rest)+),
+            err_msg: $err,
+            _phantom: std::marker::PhantomData,
+        }
+    };
+}
+
+/// This macro is used internally by `one_of!` to construct an `OrLast` chain.
+/// 
+/// **Users should not call this macro directly.**
+#[macro_export]
+macro_rules! __one_of_internal {
+    ($first:expr, $second:expr $(, $rest:expr)*) => {
+        $crate::multi::OrLast {
+            a: $first,
+            b: $crate::__one_of_internal!($second $(, $rest)*),
+            _phantom: std::marker::PhantomData,
+        }
+    };
+    ($last:expr) => {
+        $last
+    };
+}
+/// A `OneOf` combinator that attempts multiple parsers in sequence.
+///
+/// Unlike [`one_of!`], this combinator allows an arbitrary number of parsers
+/// at runtime. However, all parsers **must be of the same type**, which often
+/// requires dynamic dispatch via `Rc<dyn Combinator<'a, _, _, _>>`. 
+/// The issue is that this binds the lifetime of the parser to the input.
+/// If this is unacceptable, using [`one_of!`] or leaking then manually freeing the TokenBuffer can decouple the lifetimes.
+///
+/// [`one_of!`]: crate::one_of
+///
+/// # Example
+///
+/// ```rust
+/// use proc_macro2::{Delimiter, TokenStream};
+/// use std::{marker::PhantomData, rc::Rc};
+/// use syn::buffer::TokenBuffer;
+/// use pakerat_combinators::{
+///     basic_parsers::{DelParser, IntParser},
+///     combinator::Combinator,
+///     core::Input,
+///     multi::{OneOf,Wrapped},
+///     cache::{BasicCache, FlexibleCache},
+/// };
+///
+/// // Define input with an integer and a delimited integer
+/// let tokens: TokenStream = "42 {99}".parse().unwrap();
+/// let buffer = TokenBuffer::new2(tokens);
+/// let input = Input::new(Box::leak(Box::new(buffer))); // Leak the token buffer
+/// let mut cache = FlexibleCache::new();
+///
+/// // Create individual parsers
+/// let int_parser = Rc::new(IntParser) as Rc<dyn Combinator<i64, (), _>>;
+/// let delimited_int_parser = Rc::new(Wrapped {
+///     wrapper: DelParser(Delimiter::Brace),
+///     inner: IntParser,
+///     _phantom: PhantomData,
+/// }) as Rc<dyn Combinator<_, _, _>>;
+///
+/// // Create OneOf parser with both alternatives
+/// let one_of_parser = OneOf::new(vec![int_parser, delimited_int_parser].into_boxed_slice(), "Expected int or {int}");
+///
+/// // Parse first integer
+/// let (remaining, parsed_int) = one_of_parser.parse(input, &mut cache).unwrap();
+/// assert_eq!(parsed_int, 42);
+///
+/// // Parse delimited integer
+/// let (_, parsed_del_int) = one_of_parser.parse(remaining, &mut cache).unwrap();
+/// assert_eq!(parsed_del_int, 99);
+/// 
+/// //this bit is optional
+/// //std::mem::drop(one_of_parser);
+/// //unsafe{
+/// //   let _ = Box::from_raw(ptr);
+/// //}
+/// ```
+
+pub struct OneOf<'a, P, T = (), O = T, C = FlexibleCache<'a, T>>
+where
+    P: Combinator<'a, T, O, C>,
+    C: Cache<'a, O>,
+    O:Clone,
+{
+    /// A list of parsers of the **same type**, stored in a boxed slice.
+    pub alternatives: Box<[P]>,
+    /// The error message returned if all alternatives fail.
+    pub err_msg: &'static str,
+    /// Phantom data to tie lifetimes and types together.
+    pub _phantom: PhantomData<(Input<'a>, T, O, C)>,
+}
+
+impl<'a, P, T, O, C> Combinator<'a, T, O, C> for OneOf<'a, P, T, O, C>
+where
+    P: Combinator<'a, T, O, C>,
+    O: Clone,
+    C: Cache<'a, O>,
+{
+    fn parse(&self, input: Input<'a>, cache: &mut C) -> Pakerat<(Input<'a>, T)> {
+        for alt in &*self.alternatives {
+            match alt.parse(input, cache) {
+                Ok(ok) => return Ok(ok),
+                Err(PakeratError::Recursive(e)) => return Err(PakeratError::Recursive(e)),
+                Err(PakeratError::Regular(_)) => {} // Try next parser
+            }
+        }
+        Err(PakeratError::Regular(ParseError::Message(
+            input.span(),
+            self.err_msg,
+        )))
+    }
+
+    fn parse_ignore(&self, input: Input<'a>, cache: &mut C) -> Pakerat<Input<'a>> {
+        for alt in &*self.alternatives {
+            match alt.parse_ignore(input, cache) {
+                Ok(ok) => return Ok(ok),
+                Err(PakeratError::Recursive(e)) => return Err(PakeratError::Recursive(e)),
+                Err(PakeratError::Regular(_)) => {} // Try next parser
+            }
+        }
+        Err(PakeratError::Regular(ParseError::Message(
+            input.span(),
+            self.err_msg,
+        )))
+    }
+}
+
+impl<'a, P, T, O, C> OneOf<'a, P, T, O, C>
+where
+    P: Combinator<'a, T, O, C>,
+    O: Clone,
+    C: Cache<'a, O>,
+{
+    /// Creates a new `OneOf` parser.
+    ///
+    /// Unlike [`one_of!`], the number of parsers **does not need to be known at compile time**.  
+    /// However, all parsers **must be of the same type**.
+    ///
+    /// # Parameters:
+    /// - `parsers`: A **boxed slice** of parsers of the **same type**.
+    /// - `err_msg`: The custom error message used when parsing fails.
+    ///
+    /// **Tip:** If your parsers have different types, use **dynamic dispatch** with `Rc<dyn Combinator>`.
+    pub fn new(parsers: Box<[P]>, err_msg: &'static str) -> Self {
+        OneOf {
+            alternatives: parsers,
+            err_msg,
+            _phantom: PhantomData,
+        }
+    }
+}
 
 
 #[cfg(test)]
 mod tests {
 
+use std::rc::Rc;
+use crate::basic_parsers::IntParser;
+use crate::basic_parsers::IdentParser;
+use crate::macros::token_cursor;
 use proc_macro2::TokenStream;
 use syn::buffer::TokenBuffer;
 use super::*;
@@ -429,20 +824,98 @@ use crate::basic_parsers::PunctParser;
 use std::collections::HashMap;
 use crate::cache::BasicCache;
 
+    use crate::one_of;
 
     use crate::basic_parsers::DelParser;
 
 use proc_macro2::Delimiter;
 
-use crate::basic_parsers::IdentParser;
-/// Macro to safely create a `TokenBuffer` and `Input` with a proper lifetime.
-macro_rules! token_cursor {
-    ($name:ident, $input:expr) => {
-        let tokens: TokenStream = $input.parse().unwrap(); // Unwrap directly for clearer failure
-        let buffer = TokenBuffer::new2(tokens); // Keep buffer alive
-        let $name = Input::new(&buffer); // Extract Input
-    };
+#[test]
+fn test_oneof_parsing() {
+    // Define input with an integer and a delimited integer
+    let tokens: TokenStream = "42 {99}".parse().unwrap();
+    let buffer = Box::leak(Box::new(TokenBuffer::new2(tokens))); // Leak the token buffer
+    let ptr = buffer as *mut _;
+    let input = Input::new(buffer); 
+    let mut cache = FlexibleCache::new();
+
+    // Create individual parsers
+    let int_parser = Rc::new(IntParser) as Rc<dyn Combinator<i64, (), _>>;
+    let delimited_int_parser = Rc::new(Wrapped {
+        wrapper: DelParser(Delimiter::Brace),
+        inner: IntParser,
+        _phantom: PhantomData,
+    }) as Rc<dyn Combinator<_, _, _>>;
+    
+    // Create OneOf parser with both alternatives
+    let one_of_parser = OneOf::new(vec![int_parser, delimited_int_parser].into_boxed_slice(), "Expected int or {int}");
+    
+    // Parse first integer
+    let (remaining, parsed_int) = one_of_parser.parse(input, &mut cache).unwrap();
+    assert_eq!(parsed_int, 42 as i64);
+    
+    // Parse delimited integer
+    let (_, parsed_del_int) = one_of_parser.parse(remaining, &mut cache).unwrap();
+    assert_eq!(parsed_del_int, 99 as i64);
+
+    // this bit is optional
+    std::mem::drop(one_of_parser);
+    unsafe{
+        let _ = Box::from_raw(ptr);
+    }
 }
+
+// Macro to safely create a `TokenBuffer` and `Input` with a proper lifetime.
+#[test]
+fn test_one_of_macro() {
+
+
+    // ✅ **Case 1: Matching an Identifier**
+    let tokens = "my_var rest".parse().unwrap();
+    let buffer = TokenBuffer::new2(tokens);
+    let input = Input::new(&buffer);
+
+    let parser = one_of!("expected an identifier, an integer, or punctuation",
+        Ignore::new(IdentParser),
+        Ignore::new(IntParser),
+        Ignore::new(PunctParser)
+    );
+
+    let mut cache = BasicCache::<0>::new();
+    let next = parser.parse_ignore(input, &mut cache).unwrap();
+    assert_eq!(next.span().source_text(), Some("rest".to_string()));
+
+    // ✅ **Case 2: Matching an Integer**
+    let tokens = "123 rest".parse().unwrap();
+    let buffer = TokenBuffer::new2(tokens);
+    let input = Input::new(&buffer);
+
+    let next = parser.parse_ignore(input, &mut cache).unwrap();
+    assert_eq!(next.span().source_text(), Some("rest".to_string()));
+
+    // ✅ **Case 3: Matching a Punctuation**
+    let tokens = "+ rest".parse().unwrap();
+    let buffer = TokenBuffer::new2(tokens);
+    let input = Input::new(&buffer);
+
+    let next = parser.parse_ignore(input, &mut cache).unwrap();
+    assert_eq!(next.span().source_text(), Some("rest".to_string()));
+
+    // ❌ **Case 4: No Match (Should Fail with a Custom Error)**
+    let tokens = "\"\" rest".parse().unwrap();
+    let buffer = TokenBuffer::new2(tokens);
+    let input = Input::new(&buffer);
+
+    let result = parser.parse(input, &mut cache);
+
+    match result {
+        Err(PakeratError::Regular(ParseError::Message(_, msg))) => {
+            assert_eq!(msg, "expected an identifier, an integer, or punctuation");
+        }
+        _ => panic!("Expected a `ParseError::Message` with the correct error text"),
+    }
+}
+
 
 #[test]
 fn test_lifetimes() {

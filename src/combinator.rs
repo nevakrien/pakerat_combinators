@@ -83,6 +83,18 @@ pub trait Combinator<'a, T = (), O: Clone = T, C: Cache<'a, O> = FlexibleCache<'
     }
 }
 
+// pub trait Parser<T, O, C>: for<'a> Combinator<'a, T, O, C>
+// where
+//     C: for<'a> Cache<'a, O>, O:Clone
+// {}
+// impl<T, O, C, P> Parser<T, O, C> for P
+// where
+//     P: for<'a> Combinator<'a, T, O, C>,
+//     C: for<'a> Cache<'a, O>, O: Clone
+// {}
+
+
+
 //we would ideally not need this but for some reason rust is a bit dense....
 //so we need to implement Combinator for all cases of dyn Combinator because thats just what rust wants
 macro_rules! impl_combinator_for_wrappers {
@@ -118,6 +130,11 @@ impl_combinator_for_wrappers!(&dyn Combinator<'b, T, O, C>);
 impl_combinator_for_wrappers!(Box<dyn Combinator<'b, T, O, C>>);
 impl_combinator_for_wrappers!(Rc<dyn Combinator<'b, T, O, C>>);
 impl_combinator_for_wrappers!(Arc<dyn Combinator<'b, T, O, C>>);
+
+// impl_combinator_for_wrappers!(Rc<dyn for<'a> Combinator<'a, T, O, C>>);
+
+
+
 
 
 
@@ -173,8 +190,8 @@ fn test_dyn_closure_combinator_error_mapping() {
     let buffer = TokenBuffer::new2(tokens);
 
     // make a closure that wraps `failing_parser`(we need a helper function so that the lifetimes work like we want)
-    fn make_combinator<'b>() ->  Box<dyn Combinator<'b, (), (), FlexibleCache<'b, ()>>>{
-        Box::new(move  |input: Input<'b>, cache: &mut FlexibleCache<'b, ()>| {
+    fn make_combinator<'b>() ->  Rc<dyn Combinator<'b, (), (), FlexibleCache<'b, ()>>>{
+        Rc::new(move  |input: Input<'b>, cache: &mut FlexibleCache<'b, ()>| {
             failing_parser(input, cache).map_err(move |e| {
                 e.map(|e| {
                     let err:syn::Error = e.into();

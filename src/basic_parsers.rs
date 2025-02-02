@@ -173,7 +173,7 @@ define_parser!(LifetimeParser, Lifetime, lifetime, "a lifetime");
 
 
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct NumParser;
+pub struct IntParser;
 
 #[repr(transparent)]
 struct BasicInt(i64);
@@ -185,7 +185,7 @@ impl Parse for BasicInt {
     }
 }
 
-impl<'a, O:Clone,C: Cache<'a, O>> Combinator<'a, i64,O,C> for NumParser{
+impl<'a, O:Clone,C: Cache<'a, O>> Combinator<'a, i64,O,C> for IntParser{
 	fn parse(&self, input: Input<'a>,_state: &mut C) -> Pakerat<(Input<'a>,i64)>{
 		if let Some((x, new_input)) = input.literal() {
             let i : BasicInt = syn:: parse2(x.into_token_stream()).map_err(PakeratError::Regular)?;
@@ -248,14 +248,7 @@ use super::*;
     use syn::buffer::{TokenBuffer};
     
 
-    /// Macro to safely create a `TokenBuffer` and `Input` with a proper lifetime.
-    macro_rules! token_cursor {
-        ($name:ident, $input:expr) => {
-            let tokens: TokenStream = $input.parse().unwrap(); // Unwrap directly for clearer failure
-            let buffer = TokenBuffer::new2(tokens); // Keep buffer alive
-            let $name = Input::new(&buffer); // Extract Input
-        };
-    }
+    use crate::macros::token_cursor;
 
     #[test]
     fn match_parser_exact_match_dumby_error() {

@@ -1,5 +1,4 @@
 use crate::core::ParseError;
-use std::fmt::Display;
 use std::marker::PhantomData;
 use crate::combinator::Combinator;
 use crate::combinator::Pakerat;
