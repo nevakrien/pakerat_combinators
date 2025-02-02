@@ -254,7 +254,7 @@ where
 /// ```rust
 /// use pakerat_combinators::cache::{CachedComb, FlexibleCache};
 ///
-/// type MyCachedParser<'a, P> = CachedComb<'a, P, (), &'static str, FlexibleCache<'a, ()>>;
+/// type MyCachedParser<'a, P> = CachedComb<'a, P, (), FlexibleCache<'a, ()>>;
 /// ```
 ///
 /// This alias simplifies usage, assuming you want:
@@ -304,7 +304,7 @@ where
 /// let buffer = TokenBuffer::new2(tokens);
 /// let input = Input::new(&buffer);
 ///
-/// let my_parser = FixedCachedComb::<8, _,_,_>::new(IdentParser, 0, "Cache miss error");
+/// let my_parser = FixedCachedComb::<8, _,_>::new(IdentParser, 0, "Cache miss error");
 ///
 /// let mut cache = BasicCache::<8,Ident>::new();
 /// let (_, parsed_ident) = my_parser.parse(input, &mut cache).unwrap();
@@ -315,31 +315,29 @@ where
 /// let (_, cached_ident) = my_parser.parse(Input::empty(), &mut cache).unwrap();
 /// assert_eq!(cached_ident.to_string(), "fixed_cached_var");
 /// ```
-pub struct CachedComb<'a, INNER,T =(),MESSAGE=&'static str, C = FlexibleCache<'a,T>>
+pub struct CachedComb<'a, INNER,T =(), C = FlexibleCache<'a,T>>
 where
     INNER: Combinator<'a, T, T,C>,
     T: Clone,
     C: Cache<'a, T>,
-    MESSAGE:Display
 
 {   
     pub inner: INNER,
     pub key:usize,
-    pub message:MESSAGE,
+    pub message:&'static str,
 
     ///used so we can have generics
     pub _phantom: PhantomData<(Input<'a>, T,C)>,
 }
 
-pub type UsizeCachedComb<'a, INNER,T =(),MESSAGE=&'static str,C = FlexibleCache<'a,T>> = CachedComb<'a,INNER, T ,MESSAGE,C>;
-pub type FixedCachedComb<'a,const L: usize, INNER,T =(),MESSAGE=&'static str> = CachedComb<'a,INNER, T ,MESSAGE,BasicCache<'a, L,T>>;
+pub type UsizeCachedComb<'a, INNER,T =()> = CachedComb<'a,INNER, T,FlexibleCache<'a,T>>;
+pub type FixedCachedComb<'a,const L: usize, INNER,T =()> = CachedComb<'a,INNER, T ,BasicCache<'a, L,T>>;
 
-impl<'a, INNER,MESSAGE,T, C> Combinator<'a, T, T,C> for CachedComb <'a,INNER, T,MESSAGE,C>
+impl<'a, INNER,T, C> Combinator<'a, T, T,C> for CachedComb <'a,INNER, T,C>
 where  
 	INNER: Combinator<'a, T, T,C>,
     T: Clone,
     C: Cache<'a, T>,
-    MESSAGE:Display
 {
 
     fn parse(&self, input: Input<'a>, cache: &mut C) -> Pakerat<(Input<'a>, T)> { 
@@ -347,15 +345,14 @@ where
     }
 }
 
-impl<'a,INNER, T ,MESSAGE,C> CachedComb<'a,INNER, T ,MESSAGE,C> 
+impl<'a,INNER, T ,C> CachedComb<'a,INNER, T ,C> 
 
 where
     INNER: Combinator<'a, T, T,C>,
     T: Clone,
     C: Cache<'a, T>,
-    MESSAGE:Display
 {
-	pub fn new(inner:INNER,key:usize,message:MESSAGE) -> Self{
+	pub fn new(inner:INNER,key:usize,message:&'static str) -> Self{
 		CachedComb{inner,key,message,_phantom:PhantomData}
 	}
 }
