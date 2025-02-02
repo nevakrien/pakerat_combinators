@@ -2,7 +2,6 @@ use crate::core::ParseError;
 use crate::core::Expected;
 use crate::core::Mismatch;
 use crate::core::Found;
-use crate::core::get_start_del;
 use syn::__private::ToTokens;
 use syn::parse::ParseStream;
 use syn::LitInt;
@@ -22,7 +21,7 @@ use crate::core::Input;
 
 
 
-pub fn streams_match<'a,'b>(mut start:Input<'b>,end:Input<'_>,mut input:Input<'a>) -> Result<Input<'a>,Mismatch>{
+pub fn streams_match<'a>(mut start:Input<'_>,end:Input<'_>,mut input:Input<'a>) -> Result<Input<'a>,Mismatch>{
 	while start!=end {
 		let (new_start,a) = match start.token_tree() {
 			None => break,

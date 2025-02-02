@@ -1,6 +1,5 @@
 use std::fmt::Formatter;
 use crate::core::fmt::Display;
-use std::rc::Rc;
 use std::fmt;
 use std::cmp::Ordering;
 use syn::buffer::TokenBuffer;
@@ -209,11 +208,11 @@ pub struct Input<'a> {
     block_end: Option<DelMark>,
 }
 
-impl<'a> PartialEq for Input<'a>{
+impl PartialEq for Input<'_>{
 fn eq(&self, other: &Self) -> bool { self.cursor==other.cursor }
 }
 
-impl<'a> PartialOrd for Input<'a>{
+impl PartialOrd for Input<'_>{
 fn partial_cmp(&self, other: &Self) ->  Option<Ordering> { self.cursor.partial_cmp(&other.cursor) }
 }
 
