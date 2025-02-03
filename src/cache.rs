@@ -1,3 +1,82 @@
+//! Caching for combinator-based parsing.
+//!
+//! This module introduces the [`Cache`] trait, which provides storage for parsing results.  
+//! Cached values should generally be cheap to clone since they are cloned for every parse that retrieves them.
+//! Note that errors are also cached. The cache is responsible for detecting infinite recursion via [`CacheStatus::Pending`].
+//!
+//! The two main implementations are [`FlexibleCache`] and [`BasicCache`].
+//! 
+//! Users are encouraged to define a custom enum for cache slots, implementing `Into<usize>`
+//! to provide a structured way to manage different parse states. This improves clarity and
+//! reduces the risk of collisions when multiple rules are cached.
+//!
+//! While [`FlexibleCache`] supports any key range, [`BasicCache`] is recommended where possible,
+//! as it allows for better performance when the number of parse rules is known ahead of time.  
+//!
+//! ## Example: Structured Caching with `one_of!`
+//!
+//! ```rust
+//! use pakerat_combinators::combinator::Combinator;
+//! use pakerat_combinators::basic_parsers::{IdentParser, IntParser};
+//! use pakerat_combinators::one_of;
+//! use pakerat_combinators::core::Input;
+//! use crate::pakerat_combinators::combinator::CombinatorExt;
+//! use pakerat_combinators::cache::{CachedComb, BasicCache, FixedCachedComb};
+//! use syn::buffer::TokenBuffer;
+//! use proc_macro2::Ident;
+//!
+//! /// Enum representing different possible parsed values stored in the cache.
+//! #[derive(Clone, Debug)]
+//! enum ParsedValue {
+//!     Ident(Ident),
+//!     Number(i64),
+//! }
+//!
+//! /// Enum representing different parser types, each assigned a unique ID.
+//! #[derive(Clone, Copy, Debug)]
+//! enum ParserType {
+//!     Ident = 0,
+//!     Number,
+//! }
+//! const CACHE_SIZE : usize = 2;
+//!
+//! impl Into<usize> for ParserType {
+//!     fn into(self) -> usize {
+//!         self as usize
+//!     }
+//! }
+//! type MyCache<'a> = BasicCache::<'a,CACHE_SIZE, ParsedValue>;
+//! type MyCacheComb<'a,INNER,T> = FixedCachedComb::<'a,CACHE_SIZE,INNER,T>;
+//!
+//! // Define a parser that can handle both identifiers and numbers.
+//! let combined_parser = one_of!("expected an identifier or an integer",
+//!     MyCacheComb::<_,ParsedValue>::new(
+//!         IdentParser.map(ParsedValue::Ident), ParserType::Ident.into(), "Cache miss error"),
+//!     MyCacheComb::<_,ParsedValue>::new(
+//!         IntParser.map(ParsedValue::Number), ParserType::Number.into(), "Cache miss error")
+//! );
+//!
+//! let tokens = "variable 42".parse().unwrap();
+//! let buffer = TokenBuffer::new2(tokens);
+//! let input = Input::new(&buffer);
+//!
+//! // Create a cache instance with structured storage
+//! let mut cache = MyCache::default();
+//!
+//! // Parse the first token (identifier) and store it in the cache
+//! let (input, parsed_ident) = combined_parser.parse(input, &mut cache).unwrap();
+//! assert!(matches!(parsed_ident, ParsedValue::Ident(_)));
+//!
+//! // Parse the next token (number) and store it in the cache
+//! let (_, parsed_number) = combined_parser.parse(input, &mut cache).unwrap();
+//! assert!(matches!(parsed_number, ParsedValue::Number(_)));
+//!
+//! // Parsing again should retrieve from the cache
+//! let (_, cached_ident) = combined_parser.parse(Input::empty(), &mut cache).unwrap();
+//! assert!(matches!(cached_ident, ParsedValue::Ident(_)));
+//! ```
+
+
 use crate::core::ParseError;
 use std::marker::PhantomData;
 use crate::combinator::Combinator;
@@ -177,7 +256,14 @@ impl<'a,T:Clone> CacheSpot<'a, T> for HashCache<'a,T>
 }
 
 
-
+/// A `Cache` is meant to be used with [`Combinator`].
+/// 
+/// Caching guarantees linear time complexity in all public APIs (including recursive ones).
+/// This is achieved by erroring when the same input is attempted to be parsed a second time.
+/// 
+/// In the worst case, the time complexity is O(inputs_len * parse_types).
+/// 
+/// As a bonus, caching also prevents accidental infinite recursion.
 pub trait Cache<'a, T : Clone = ()> {
     /// The type of cache slot stored in the cache
     type Item: CacheSpot<'a, T>;
@@ -185,13 +271,13 @@ pub trait Cache<'a, T : Clone = ()> {
     /// Retrieves the cache for the byte anotated by slot
     fn get_slot(&mut self, slot: usize) -> &mut Self::Item;
 
-    ///this function implements caching which will never break any valid peg parser and will never return wrong results.
+    /// this function implements caching which will never break any valid peg parser and will never return wrong results.
 	///
-	///it detects most potential infinite loops by keeping track of all the pending calls. 
+	/// it detects most potential infinite loops by keeping track of all the pending calls. 
 	///
-	///however it will still reject some grammers.
-	///for instance "expr + term => expr" would not work because it causes an infinite left recursive loop. 
-	///but "term + expr => expr" will work
+	/// however it will still reject some grammers.
+	/// for instance "expr + term => expr" would not work because it causes an infinite left recursive loop. 
+	/// but "term + expr => expr" will work
     fn parse_cached<P,FE>(&mut self,input:Input<'a>, key: usize ,parser:&P,recurse_err:FE) -> Pakerat<(Input<'a>,T)>
     where P:Combinator<'a,T,T,Self> + ?Sized, FE:FnOnce() -> ParseError, Self: Sized
     {	
@@ -225,7 +311,9 @@ impl<'a, T : Clone , C > Cache<'a,T> for HashMap<usize,C> where C : CacheSpot<'a
 	}
 }
 
+/// this cache is fairly performent, it relies on knowing the number of parse rules ahead of time
 pub type BasicCache<'a,const L: usize,T=()>= HashMap<usize, ArrayCache<'a,L, T>>;
+/// this cache can work with any id range.
 pub type FlexibleCache<'a,T=()>= HashMap<usize, HashCache<'a, T>>;
 // pub type StrCache<'a,T=(),E=syn::Error>= HashMap<usize, HashCache<'a,&'a str, T, E>>;
 

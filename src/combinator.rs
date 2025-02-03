@@ -1,4 +1,5 @@
 
+use std::marker::PhantomData;
 use crate::core::ParseError;
 use crate::cache::FlexibleCache;
 // use crate::cache::CacheExt;
@@ -73,25 +74,88 @@ fn eq(&self, other: &PakeratError<E>) -> bool {
 }
 }
 
+// pub struct State<'a,'me,Extra = (),T = (), O: Clone = T, C: Cache<'a, O> = FlexibleCache<'a,T>>{
+//     pub cache:&'me mut C,
+//     pub extra:Extra,
+//     _phantom:PhantomData<(Input<'a>,T,O)>
+// }
 
+// impl<'a,'me,T, O: Clone, C: Cache<'a, O>, Extra> Cache<'a,O> for  State<'a,'me,Extra,T, O, C>{
+// type Item = C::Item;
+// fn get_slot(&mut self, id: usize) -> &mut Self::Item { self.cache.get_slot(id)}
+// }
 
-pub trait Combinator<'a, T = (), O: Clone = T, C: Cache<'a, O> = FlexibleCache<'a,T>> {
+// impl<'a,'me,T, O: Clone, C: Cache<'a, O>>
+// State<'a,'me,(),T, O, C>{
+//     pub fn new_empty(cache:&'me mut C) -> Self{
+//         State{
+//             cache,
+//             extra: (),
+//             _phantom:PhantomData
+//         }
+//     }
+
+//     pub fn make_child<Extra>(&mut self,extra:Extra) -> State<'a,'_,Extra,T, O, C>{
+//         State{
+//             cache: self.cache,
+//             extra,
+//             _phantom:PhantomData
+//         }
+//     }
+// }
+
+// impl<'a,'me,T, O: Clone, C: Cache<'a, O>> 
+// From<&'me mut C> for State<'a,'me,(),T, O, C>{
+// fn from(cache: &'me mut C) -> Self {State::new_empty(cache)}
+// }
+
+// impl<'a,'me,'inner,Extra,T, O: Clone, C: Cache<'a, O>>
+// State<'a,'me,&'inner mut Extra,T, O, C>{
+//     pub fn new(cache:&'me mut C,extra:&'inner mut Extra) -> Self{
+//         State{cache,extra,_phantom:PhantomData}
+//     }
+
+//     pub fn make_child<Added>(&mut self,add:Added) -> State<'a,'_, (&mut Extra,Added),T, O, C>{
+//         let extra : (&mut Extra,Added)= (self.extra,add);
+//         State{
+//             cache: self.cache,
+//             extra,
+//             _phantom:PhantomData
+//         }
+//     }
+// }
+
+// impl<'a,'b,'parent,Parent,Added,T, O: Clone, C: Cache<'a, O>>
+// State<'a,'b, (&'parent mut Parent,Added),T, O, C>{
+//     pub fn as_parent(&mut self) -> State<'a,'_,&mut Parent,T, O, C>{
+//         State{
+//             cache:self.cache,
+//             extra:self.extra.0,
+//             _phantom:PhantomData
+//         }
+//     }
+// }
+
+/// A `Combinator` is a fundamental parser used throughout this crate.
+/// 
+/// These combinators are designed to behave similarly to closures and, in many cases, 
+/// compile down to simple function pointers for efficiency. They serve as building blocks 
+/// for more complex parsing operations, ensuring flexibility while maintaining performance.
+pub trait Combinator<'a, T = (), O: Clone = T, C: Cache<'a, O> = FlexibleCache<'a, T>> {
+    /// Parses the given `input`, utilizing the provided cache `state` for intermediate storage.
+    ///
+    /// Returns a [`Pakerat`] result containing the remaining input and the parsed output.
     fn parse(&self, input: Input<'a>, state: &mut C) -> Pakerat<(Input<'a>, T)>;
-    fn parse_ignore(&self, input: Input<'a>,state: &mut C) -> Pakerat<Input<'a>>{
-        let (ans,_) = self.parse(input,state)?;
+
+    /// Parses the input while discarding the output.
+    ///
+    /// This method exists to avoid allocating memory for parses that are ignored.
+    /// For the most parts users are expected to not really consider it.
+    fn parse_ignore(&self, input: Input<'a>, state: &mut C) -> Pakerat<Input<'a>> {
+        let (ans, _) = self.parse(input, state)?;
         Ok(ans)
     }
 }
-
-// pub trait Parser<T, O, C>: for<'a> Combinator<'a, T, O, C>
-// where
-//     C: for<'a> Cache<'a, O>, O:Clone
-// {}
-// impl<T, O, C, P> Parser<T, O, C> for P
-// where
-//     P: for<'a> Combinator<'a, T, O, C>,
-//     C: for<'a> Cache<'a, O>, O: Clone
-// {}
 
 
 
@@ -238,6 +302,14 @@ pub trait CombinatorExt<'a, T,O:Clone ,C: Cache<'a, O>> : Combinator<'a, T,O,C>{
         make(self)
     }
 
+    fn map<F,T2>(self,map_fn:F) -> MapCombinator<'a, Self, F, T,T2, O, C> where F: Fn(T) -> T2, Self: Sized{
+        MapCombinator{
+            inner:self,
+            map_fn,
+            _phantom:PhantomData
+        }
+    }
+
     fn parse_into<V :From<T>,E2:Error + From<PakeratError>>(&self, input: Input<'a>,state: &mut C) -> Result<(Input<'a>, V), E2>{
         let (input,t) = self.parse(input,state)?;
         Ok((input,t.into()))
@@ -246,3 +318,29 @@ pub trait CombinatorExt<'a, T,O:Clone ,C: Cache<'a, O>> : Combinator<'a, T,O,C>{
 }
 
 impl<'a, T, O:Clone, C: Cache<'a, O>,F:Combinator<'a, T, O, C>> CombinatorExt<'a, T, O, C> for F{}
+
+/// A combinator that transforms the output of another parser using a mapping function.
+pub struct MapCombinator<'a, P, F, T,T2, O, C>
+where
+    P: Combinator<'a, T, O, C>,
+    F: Fn(T) -> T2,
+    O: Clone,
+    C: Cache<'a, O>,
+{
+    inner: P,
+    map_fn: F,
+    _phantom:PhantomData<(Input<'a>,T,T2,O,C)>
+}
+
+impl<'a, P, F, T,T2, O, C> Combinator<'a, T2, O, C> for MapCombinator<'a, P, F, T,T2, O, C>
+where
+    P: Combinator<'a, T, O, C>,
+    F: Fn(T) -> T2,
+    O: Clone,
+    C: Cache<'a, O>,
+{
+    fn parse(&self, input: Input<'a>, state: &mut C) -> Pakerat<(Input<'a>, T2)> {
+        let (input, output) = self.inner.parse(input, state)?;
+        Ok((input, (self.map_fn)(output)))
+    }
+}
