@@ -102,6 +102,23 @@ where
     }
 }
 
+impl<'a, INNER, WRAPPER, T, O, C> Wrapped<'a, INNER, WRAPPER, T, O, C>
+where
+    WRAPPER: Combinator<'a, Input<'a>, O,C>,
+    INNER: Combinator<'a, T, O,C>,
+    O: Clone, 
+    C: Cache<'a, O>
+{
+    
+    pub fn new(wrapper:WRAPPER,inner:INNER) -> Self{
+        Self{
+            wrapper,
+            inner,
+            _phantom:PhantomData
+        }
+    }
+}
+
 /// This struct attempts to parse an optional occurrence of an inner parser.
 /// If the inner parser fails with a `Regular` error, `Maybe` will return `None` instead of failing.
 /// If the inner parser fails with a `Recursive` error, the error is propagated.

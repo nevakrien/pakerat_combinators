@@ -197,6 +197,40 @@ impl_combinator_for_wrappers!(Arc<dyn Combinator<'b, T, O, C>>);
 
 // impl_combinator_for_wrappers!(Rc<dyn for<'a> Combinator<'a, T, O, C>>);
 
+//we would ideally not need this but for some reason rust is a bit dense....
+//so we need to implement Combinator for all cases of dyn Combinator because thats just what rust wants
+macro_rules! impl_combinator_for_wrapper_p {
+    ($wrapper:ty) => {
+        impl<'b, T, O, C,P> Combinator<'b, T, O, C> for $wrapper
+        where
+            O: Clone,
+            C: Cache<'b, O>,
+            P:Combinator<'b, T, O, C>
+
+        {
+            fn parse(
+                &self,
+                input: Input<'b>,
+                cache: &mut C,
+            ) -> Pakerat<(Input<'b>, T)> {
+               P::parse(self,input, cache) // Delegate to the inner trait object
+            }
+
+            fn parse_ignore(
+                &self,
+                input: Input<'b>,
+                cache: &mut C,
+            ) -> Pakerat<Input<'b>> {
+               P::parse_ignore(self,input, cache)
+            }
+        }
+    };
+}
+
+
+// impl_combinator_for_wrapper_p!(Box<P>);
+impl_combinator_for_wrapper_p!(Rc<P>);
+impl_combinator_for_wrapper_p!(Arc<P>);
 
 
 
