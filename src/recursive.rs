@@ -1,9 +1,10 @@
+use crate::cache::DynCache;
+use crate::combinator::BorrowParse;
 use crate::combinator::Pakerat;
 use crate::core::Input;
 use std::cell::OnceCell;
 use std::marker::PhantomData;
 use crate::combinator::Combinator;
-use crate::cache::{Cache, FlexibleCache};
 
 /// A combinator that allows for recursive parsing by deferring initialization.
 ///
@@ -52,12 +53,12 @@ use crate::cache::{Cache, FlexibleCache};
 /// let (remaining, result) = parser.parse(input, &mut cache).unwrap();
 /// assert!(remaining.eof());
 /// ```
-pub struct RecursiveParser<'a, T, O: Clone = T, C: Cache<'a, O> = FlexibleCache<'a, T>> {
-    cell: OnceCell<Box<dyn Combinator<'a, T, O, C> + 'a>>,
-    _phantom: PhantomData<(&'a (), T, O, C)>,
+pub struct RecursiveParser<'parser ,T:BorrowParse, O:BorrowParse = T> {
+     cell: OnceCell<Box<dyn Combinator<T, O> + 'parser>>,
+    _phantom: PhantomData<( &'parser (), T, O)>,
 }
 
-impl<'a, T, O: Clone, C: Cache<'a, O>> RecursiveParser<'a, T, O, C> {
+impl<'parser , T:BorrowParse, O:BorrowParse> RecursiveParser<'parser , T, O> {
     /// Creates a new recursive parser without an initial implementation.
     ///
     /// The parser must be initialized using [`set`] before use.
@@ -73,7 +74,7 @@ impl<'a, T, O: Clone, C: Cache<'a, O>> RecursiveParser<'a, T, O, C> {
     /// This function should only be called once.
     pub fn set<P>(&self, parser: P)
     where
-        P: Combinator<'a, T, O, C> + 'a,
+        P: Combinator< T, O> + 'parser  ,
     {
         self.cell
             .set(Box::new(parser))
@@ -81,19 +82,19 @@ impl<'a, T, O: Clone, C: Cache<'a, O>> RecursiveParser<'a, T, O, C> {
     }
 
     /// Retrieves the underlying parser, or panics if used before initialization.
-    fn get(&self) -> &(dyn Combinator<'a, T, O, C> + 'a) {
+    fn get(&self) -> &(dyn Combinator<T, O> + 'parser) {
         self.cell.get().expect("Used uninitialized recursive parser").as_ref()
     }
 }
 
-impl<'a, T, O: Clone, C: Cache<'a, O>> Combinator<'a, T, O, C> for &RecursiveParser<'a, T, O, C> {
-    fn parse(&self, input: Input<'a>, state: &mut C) -> Pakerat<(Input<'a>, T)> {
+impl<'parser, T:BorrowParse, O:BorrowParse> Combinator< T, O> for &RecursiveParser<'parser, T, O> {
+    fn parse<'a>(&self, input: Input<'a>, state: &mut dyn DynCache<'a,O>) -> Pakerat<(Input<'a>, T::Output<'a>)> {
         self.get().parse(input, state)
     }
 }
 
-impl<'a, T, O: Clone, C: Cache<'a, O>> Combinator<'a, T, O, C> for RecursiveParser<'a, T, O, C> {
-    fn parse(&self, input: Input<'a>, state: &mut C) -> Pakerat<(Input<'a>, T)> {
+impl<'parser, T:BorrowParse, O:BorrowParse> Combinator< T, O> for RecursiveParser<'parser, T, O> {
+    fn parse<'a>(&self, input: Input<'a>, state: &mut dyn DynCache<'a,O>) -> Pakerat<(Input<'a>, T::Output<'a>)> {
         self.get().parse(input, state)
     }
 }

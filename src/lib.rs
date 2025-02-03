@@ -1,9 +1,13 @@
+//for now in testing
+// #![feature(specialization)]
+
 pub mod cache;
 pub mod combinator;
 pub mod basic_parsers;
 pub mod multi;
 pub mod core;
 pub mod recursive;
+mod test_cache;
 
 mod macros {
 	#![allow(unused_macros,unused_imports)]

@@ -1,10 +1,10 @@
+use crate::cache::DynCache;
+use crate::combinator::BorrowParse;
 use crate::core::Found;
 use crate::core::Expected;
 use crate::core::Mismatch;
 use crate::core::ParseError;
-use crate::cache::FlexibleCache;
 use crate::combinator::{Pakerat,Combinator};
-use crate::cache::Cache;
 use crate::combinator::PakeratError;
 use crate::core::Input;
 
@@ -40,34 +40,36 @@ use std::marker::PhantomData;
 /// let (_, parsed_ident) = my_parser.parse(input, &mut cache).unwrap();
 /// assert_eq!(parsed_ident.to_string(), "my_var");
 /// ```
-pub struct Wrapped<'b, INNER,WRAPPER,T =(), O=T, C = FlexibleCache<'b,T>>
+pub struct Wrapped<INNER,WRAPPER,T : BorrowParse =(), O=T>
 where
-    INNER: Combinator<'b, T, O,C>,
-    WRAPPER: Combinator<'b, Input<'b>, O,C>,
-    O: Clone, 
-    C: Cache<'b, O>
+    INNER: Combinator< T, O>,
+    //'static resolves like Input<'_>
+    WRAPPER: Combinator< Input<'static>, O>,
+
+    O: BorrowParse, 
 {	
 	///finds the start for the inside parser
     pub wrapper: WRAPPER,
     ///main parser that returns the final output
     pub inner: INNER,
     ///used so we can have generics
-    pub _phantom: PhantomData<(Input<'b>, T, O,C)>,
+    pub _phantom: PhantomData<(T, O)>,
 }
 
 
-impl<'a, INNER, WRAPPER, T, O, C> Combinator<'a, T, O,C> for Wrapped<'a, INNER, WRAPPER, T, O, C>
+impl<INNER, WRAPPER, T, O> Combinator<T, O> for Wrapped<INNER, WRAPPER, T, O>
 where
-    WRAPPER: Combinator<'a, Input<'a>, O,C>,
-    INNER: Combinator<'a, T, O,C>,
-    O: Clone, 
-    C: Cache<'a, O>
+    WRAPPER: Combinator<Input<'static>, O>,
+    INNER: Combinator< T, O>,
+    O: BorrowParse, 
+    T : BorrowParse,
+
 {
-    fn parse(
+    fn parse<'a>(
         &self,
         input: Input<'a>,
-        cache: &mut C,
-    ) -> Pakerat<(Input<'a>, T)> {
+        cache: &mut dyn DynCache<'a,O>,
+    ) -> Pakerat<(Input<'a>, T::Output<'a>)> {
         let (next, inner_result) = self.wrapper.parse(input, cache)?;
         let (remaining, final_result) = self.inner.parse(inner_result, cache)?;
 
@@ -82,10 +84,10 @@ where
         Ok((next, final_result))
     }
 
-    fn parse_ignore(
+    fn parse_ignore<'a>(
         &self,
         input: Input<'a>,
-        cache: &mut C,
+        cache: &mut dyn DynCache<'a,O>,
     ) -> Pakerat<Input<'a>> {
         let (next, inner_result) = self.wrapper.parse(input, cache)?;
         let remaining= self.inner.parse_ignore(inner_result, cache)?;
@@ -102,22 +104,22 @@ where
     }
 }
 
-impl<'a, INNER, WRAPPER, T, O, C> Wrapped<'a, INNER, WRAPPER, T, O, C>
+impl<INNER, WRAPPER, T, O> Wrapped<INNER, WRAPPER, T, O>
 where
-    WRAPPER: Combinator<'a, Input<'a>, O,C>,
-    INNER: Combinator<'a, T, O,C>,
-    O: Clone, 
-    C: Cache<'a, O>
+    WRAPPER: Combinator<Input<'static>, O>,
+    INNER: Combinator<T, O>,
+    O: BorrowParse, 
+    T: BorrowParse,
 {
-    
-    pub fn new(wrapper:WRAPPER,inner:INNER) -> Self{
-        Self{
+    pub fn new(wrapper: WRAPPER, inner: INNER) -> Self {
+        Self {
             wrapper,
             inner,
-            _phantom:PhantomData
+            _phantom: PhantomData,
         }
     }
 }
+
 
 /// This struct attempts to parse an optional occurrence of an inner parser.
 /// If the inner parser fails with a `Regular` error, `Maybe` will return `None` instead of failing.
@@ -143,58 +145,67 @@ where
 /// let (_, parsed_ident) = my_parser.parse(input, &mut cache).unwrap();
 /// assert_eq!(parsed_ident.unwrap().to_string(), "optional_var");
 /// ```
-//
-pub struct Maybe<'b, INNER,T =(), O=T, C = FlexibleCache<'b,T>>
+///
+pub struct Maybe<INNER, T = (), O = T>
 where
-    INNER: Combinator<'b, T, O,C>,
-    O: Clone,
-    C: Cache<'b, O>
-{   
+    INNER: Combinator<T, O>,
+    T: BorrowParse,
+    O: BorrowParse,
+{
     pub inner: INNER,
-    ///used so we can have generics
-    pub _phantom: PhantomData<(Input<'b>, T, O,C)>,
+    /// Used so we can have generics
+    pub _phantom: PhantomData<(T, O)>,
 }
 
-impl<'a, INNER,T, O, C> Combinator<'a, Option<T>, O,C> for Maybe<'a, INNER,T, O, C> 
-    where O: Clone, 
-    C: Cache<'a, O>,
-    INNER: Combinator<'a, T, O,C>,
-{
-
-fn parse(&self, input: Input<'a>, cache: &mut C) -> Pakerat<(Input<'a>, Option<T>)> { 
-    match self.inner.parse(input,cache){
-        Ok((new_input,x)) => Ok((new_input,Some(x))),
-        Err(e) => match e {
-            PakeratError::Regular(_) => Ok((input,None)),
-            PakeratError::Recursive(_) => Err(e)
-        }
-    }
-}
-fn parse_ignore(&self, input: Input<'a>, cache: &mut C) -> Pakerat<Input<'a>> { 
-    match self.inner.parse_ignore(input,cache){
-        Ok(new_input) => Ok(new_input),
-        Err(e) => match e {
-            PakeratError::Regular(_) => Ok(input),
-            PakeratError::Recursive(_) => Err(e)
-        }
-    }
-}
-}
-
-impl<'b, INNER,T, O, C> Maybe<'b, INNER,T, O, C> 
+impl<INNER, T, O> Combinator<Option<T>, O> for Maybe<INNER, T, O>
 where
-    INNER: Combinator<'b, T, O,C>,
-    O: Clone, 
-    C: Cache<'b, O>,
+    O: BorrowParse,
+    T: BorrowParse,
+    INNER: Combinator<T, O>,
 {
-    
-    pub fn new(inner:INNER) -> Self{
-        Maybe{
-            inner,
-            _phantom:PhantomData
+    fn parse<'a>(
+        &self,
+        input: Input<'a>,
+        cache: &mut dyn DynCache<'a, O>,
+    ) -> Pakerat<(Input<'a>, Option<T::Output<'a>>)> {
+        match self.inner.parse(input, cache) {
+            Ok((new_input, x)) => Ok((new_input, Some(x))),
+            Err(e) => match e {
+                PakeratError::Regular(_) => Ok((input, None)),
+                PakeratError::Recursive(_) => Err(e),
+            },
+        }
+    }
+
+    fn parse_ignore<'a>(
+        &self,
+        input: Input<'a>,
+        cache: &mut dyn DynCache<'a, O>,
+    ) -> Pakerat<Input<'a>> {
+        match self.inner.parse_ignore(input, cache) {
+            Ok(new_input) => Ok(new_input),
+            Err(e) => match e {
+                PakeratError::Regular(_) => Ok(input),
+                PakeratError::Recursive(_) => Err(e),
+            },
         }
     }
 }
+
+impl<INNER, T, O> Maybe<INNER, T, O>
+where
+    INNER: Combinator<T, O>,
+    O: BorrowParse,
+    T: BorrowParse,
+{
+    pub fn new(inner: INNER) -> Self {
+        Maybe {
+            inner,
+            _phantom: PhantomData,
+        }
+    }
+}
+
 
 /// This struct parses zero or more occurrences of an inner parser.
 /// It keeps collecting results until the inner parser fails with a `Regular` error.
@@ -220,24 +231,24 @@ where
 /// let (_, parsed_idents) = my_parser.parse(input, &mut cache).unwrap();
 /// assert_eq!(parsed_idents.len(), 3);
 /// ```
-pub struct Many0<'b, INNER,T =(), O=T, C = FlexibleCache<'b,T>>
+pub struct Many0<INNER,T =(), O=T >
 where
-    INNER: Combinator<'b, T, O,C>,
-    O: Clone, 
-    C: Cache<'b, O>
+    INNER: Combinator< T, O>,
+    O: BorrowParse, 
+    T: BorrowParse
 {   
     pub inner: INNER,
     ///used so we can have generics
-    pub _phantom: PhantomData<(Input<'b>, T, O,C)>,
+    pub _phantom: PhantomData<(T, O)>,
 }
 
-impl<'a, INNER,T, O, C> Combinator<'a, Vec<T>, O,C> for Many0<'a, INNER,T, O, C> 
-    where O: Clone, 
-    C: Cache<'a, O>,
-    INNER: Combinator<'a, T, O,C>,
+impl< INNER,T, O> Combinator<Vec<T>, O> for Many0< INNER,T, O> 
+    where O: BorrowParse, 
+    T: BorrowParse,
+    INNER: Combinator<T, O>,
 {
 
-fn parse(&self, mut input: Input<'a>, cache: &mut C) -> Pakerat<(Input<'a>, Vec<T>)> { 
+fn parse<'a>(&self, mut input: Input<'a>, cache: &mut dyn DynCache<'a,O>) -> Pakerat<(Input<'a>, Vec<T::Output<'a>>)> { 
     let mut vec = Vec::new();
     loop{
         match self.inner.parse(input,cache){
@@ -252,7 +263,7 @@ fn parse(&self, mut input: Input<'a>, cache: &mut C) -> Pakerat<(Input<'a>, Vec<
         }
     }
 }
-fn parse_ignore(&self, mut input: Input<'a>, cache: &mut C) -> Pakerat<Input<'a>> { 
+fn parse_ignore<'a>(&self, mut input: Input<'a>, cache: &mut dyn DynCache<'a,O>) -> Pakerat<Input<'a>> { 
     loop{
         match self.inner.parse(input,cache){
             Ok((new_input,_x)) => {
@@ -267,11 +278,12 @@ fn parse_ignore(&self, mut input: Input<'a>, cache: &mut C) -> Pakerat<Input<'a>
 }
 }
 
-impl<'b, INNER,T, O, C> Many0<'b, INNER,T, O, C> 
+impl< INNER,T, O> Many0< INNER,T, O> 
 where
-    INNER: Combinator<'b, T, O,C>,
-    O: Clone, 
-    C: Cache<'b, O>,
+    INNER: Combinator< T, O>,
+    O: BorrowParse, 
+    T : BorrowParse,
+    
 {
     
     pub fn new(inner:INNER) -> Self{
@@ -307,24 +319,26 @@ where
 /// let (_, parsed_idents) = my_parser.parse(input, &mut cache).unwrap();
 /// assert_eq!(parsed_idents.len(), 3);
 /// ```
-pub struct Many1<'b, INNER,T =(), O=T, C = FlexibleCache<'b>>
+pub struct Many1<INNER,T =(), O=T>
 where
-    INNER: Combinator<'b, T, O,C>,
-    O: Clone, 
-    C: Cache<'b, O>
+    INNER: Combinator< T, O>,
+    T : BorrowParse,
+    O: BorrowParse, 
+    
 {   
     pub inner: INNER,
     ///used so we can have generics
-    pub _phantom: PhantomData<(Input<'b>, T, O,C)>,
+    pub _phantom: PhantomData<(T, O)>,
 }
 
-impl<'a, INNER,T, O, C> Combinator<'a, Vec<T>, O,C> for Many1<'a, INNER,T, O, C> 
-    where O: Clone, 
-    C: Cache<'a, O>,
-    INNER: Combinator<'a, T, O,C>,
+impl< INNER,T, O> Combinator<Vec<T>, O> for Many1< INNER,T, O> 
+    where O: BorrowParse, 
+    T : BorrowParse,
+    
+    INNER: Combinator<T, O>,
 {
 
-fn parse(&self, input: Input<'a>, cache: &mut C) -> Pakerat<(Input<'a>, Vec<T>)> { 
+fn parse<'a>(&self, input: Input<'a>, cache: &mut dyn DynCache<'a,O>) -> Pakerat<(Input<'a>, Vec<T::Output<'a>>)> { 
     let (mut input,first) = self.inner.parse(input,cache)?;
     let mut vec = vec![first];
     loop{
@@ -340,7 +354,7 @@ fn parse(&self, input: Input<'a>, cache: &mut C) -> Pakerat<(Input<'a>, Vec<T>)>
         }
     }
 }
-fn parse_ignore(&self, input: Input<'a>, cache: &mut C) -> Pakerat<Input<'a>> { 
+fn parse_ignore<'a>(&self, input: Input<'a>, cache: &mut dyn DynCache<'a,O>) -> Pakerat<Input<'a>> { 
     let (mut input,_first) = self.inner.parse(input,cache)?;
     loop{
         match self.inner.parse(input,cache){
@@ -356,11 +370,12 @@ fn parse_ignore(&self, input: Input<'a>, cache: &mut C) -> Pakerat<Input<'a>> {
 }
 }
 
-impl<'b, INNER,T, O, C> Many1<'b, INNER,T, O, C> 
+impl< INNER,T, O> Many1< INNER,T, O> 
 where
-    INNER: Combinator<'b, T, O,C>,
-    O: Clone, 
-    C: Cache<'b, O>,
+    INNER: Combinator< T, O>,
+    T : BorrowParse,
+    O: BorrowParse, 
+    
 {
     
     pub fn new(inner:INNER) -> Self{
@@ -394,34 +409,37 @@ where
 /// let mut cache = BasicCache::<0>::new();
 /// let (_cursor, ()) = my_parser.parse(input, &mut cache).unwrap();
 /// ```
-pub struct Ignore<'b, INNER,T =(), O=T, C = FlexibleCache<'b>>
+pub struct Ignore< INNER,T =(), O=T>
 where
-    INNER: Combinator<'b, T, O,C>,
-    O: Clone, 
-    C: Cache<'b, O>
+    INNER: Combinator< T, O>,
+    O: BorrowParse, 
+    T : BorrowParse,
+    
 {   
     pub inner: INNER,
     ///used so we can have generics
-    pub _phantom: PhantomData<(Input<'b>, T, O,C)>,
+    pub _phantom: PhantomData<(T, O)>,
 }
 
-impl<'a, INNER,T, O, C> Combinator<'a, (), O,C> for Ignore<'a, INNER,T, O, C> 
-    where O: Clone, 
-    C: Cache<'a, O>,
-    INNER: Combinator<'a, T, O,C>,
+impl< INNER,T, O> Combinator<(), O> for Ignore<INNER,T, O> 
+    where O: BorrowParse, 
+    T : BorrowParse,
+    
+    INNER: Combinator<T, O>,
 {
 
-fn parse(&self, input: Input<'a>, cache: &mut C) -> Pakerat<(Input<'a>, ())> { 
+fn parse<'a>(&self, input: Input<'a>, cache: &mut dyn DynCache<'a,O>) -> Pakerat<(Input<'a>, ())> { 
     let c = self.inner.parse_ignore(input,cache)?;
     Ok((c,()))
 }
 }
 
-impl<'b, INNER,T, O, C> Ignore<'b, INNER,T, O, C> 
+impl<INNER,T, O> Ignore< INNER,T, O> 
 where
-    INNER: Combinator<'b, T, O,C>,
-    O: Clone, 
-    C: Cache<'b, O>,
+    INNER: Combinator< T, O>,
+    T : BorrowParse,
+    O: BorrowParse, 
+    
 {
     
     pub fn new(inner:INNER) -> Self{
@@ -469,28 +487,30 @@ where
 /// let next = parser.parse_ignore(input, &mut cache).unwrap();
 /// assert_eq!(next.span().source_text(), Some("rest".to_string()));
 /// ```
-pub struct OrLast<'a,A, B, T = (), O = T, C = FlexibleCache<'a, T>>
+pub struct OrLast<A, B, T = (), O = T>
 where
-    A: Combinator<'a, T, O, C>,
-    B: Combinator<'a, T, O, C>,
-    O: Clone,
-    C: Cache<'a, O>,
+    A: Combinator<T, O>,
+    T : BorrowParse,
+    B: Combinator<T, O>,
+    O: BorrowParse,
+    
 {   
     ///first element
     pub a: A,
     ///second element
     pub b: B,
-    pub _phantom: PhantomData<(Input<'a>,T, O, C)>,
+    pub _phantom: PhantomData<(T, O)>,
 }
 
-impl<'a, A, B, T, O, C> Combinator<'a, T, O, C> for OrLast<'a, A, B, T, O, C>
+impl< A, B, T, O> Combinator<T, O> for OrLast<A, B, T, O>
 where
-    A: Combinator<'a, T, O, C>,
-    B: Combinator<'a, T, O, C>,
-    O: Clone,
-    C: Cache<'a, O>,
+    A: Combinator<T, O>,
+    T : BorrowParse,
+    B: Combinator<T, O>,
+    O: BorrowParse,
+    
 {
-    fn parse(&self, input: Input<'a>, cache: &mut C) -> Pakerat<(Input<'a>, T)> {
+    fn parse<'a>(&self, input: Input<'a>, cache: &mut dyn DynCache<'a,O>) -> Pakerat<(Input<'a>, T::Output<'a>)> {
         match self.a.parse(input, cache) {
             ok @ Ok(_) => ok,
             Err(PakeratError::Recursive(e)) => Err(PakeratError::Recursive(e)),
@@ -498,7 +518,7 @@ where
         }
     }
 
-    fn parse_ignore(&self, input: Input<'a>, cache: &mut C) -> Pakerat<Input<'a>> {
+    fn parse_ignore<'a>(&self, input: Input<'a>, cache: &mut dyn DynCache<'a,O>) -> Pakerat<Input<'a>> {
         match self.a.parse_ignore(input, cache) {
             ok @ Ok(_) => ok,
             Err(PakeratError::Recursive(e)) => Err(PakeratError::Recursive(e)),
@@ -506,12 +526,13 @@ where
         }
     }
 }
-impl<'a, A, B, T, O, C> OrLast<'a, A, B, T, O, C>
+impl< A, B, T, O> OrLast< A, B, T, O>
 where
-    A: Combinator<'a, T, O, C>,
-    B: Combinator<'a, T, O, C>,
-    O: Clone,
-    C: Cache<'a, O>,
+    A: Combinator<T, O>,
+    T : BorrowParse,
+    B: Combinator<T, O>,
+    O: BorrowParse,
+    
 {
     pub fn new(a:A,b:B) -> Self { OrLast{a,b,_phantom:PhantomData} }
 }
@@ -550,27 +571,29 @@ where
 ///     _ => panic!("Expected a `ParseError::Message` with the correct error text"),
 /// }
 /// ```
-pub struct ErrorWrapper<'a, P, T = (), O = T, C = FlexibleCache<'a, T>>
+pub struct ErrorWrapper< P, T = (), O = T>
 where
-    P: Combinator<'a, T, O, C>,
-    O: Clone,
-    C: Cache<'a, O>,
+    P: Combinator<T, O>,
+    T : BorrowParse,
+    O: BorrowParse,
+    
 {
     /// The internal parser to be wrapped.
     pub parser: P,
     /// The custom error message to be used if parsing fails.
     pub err_msg: &'static str,
     /// Phantom data to tie lifetimes and types together.
-    pub _phantom: PhantomData<(Input<'a>, T, O, C)>,
+    pub _phantom: PhantomData<( T, O)>,
 }
 
-impl<'a, P, T, O, C> Combinator<'a, T, O, C> for ErrorWrapper<'a, P, T, O, C>
+impl< P, T, O> Combinator<T, O> for ErrorWrapper< P, T, O>
 where
-    P: Combinator<'a, T, O, C>,
-    O: Clone,
-    C: Cache<'a, O>,
+    P: Combinator<T, O>,
+    T : BorrowParse,
+    O: BorrowParse,
+    
 {
-    fn parse(&self, input: Input<'a>, cache: &mut C) -> Pakerat<(Input<'a>, T)> {
+    fn parse<'a>(&self, input: Input<'a>, cache: &mut dyn DynCache<'a,O>) -> Pakerat<(Input<'a>, T::Output<'a>)> {
         match self.parser.parse(input, cache) {
             Ok((next_input, result)) => Ok((next_input, result)),
             Err(PakeratError::Recursive(e)) => Err(PakeratError::Recursive(e)),
@@ -580,7 +603,7 @@ where
         }
     }
 
-    fn parse_ignore(&self, input: Input<'a>, cache: &mut C) -> Pakerat<Input<'a>> {
+    fn parse_ignore<'a>(&self, input: Input<'a>, cache: &mut dyn DynCache<'a,O>) -> Pakerat<Input<'a>> {
         match self.parser.parse_ignore(input, cache) {
             Ok(next_input) => Ok(next_input),
             Err(PakeratError::Recursive(e)) => Err(PakeratError::Recursive(e)),
@@ -591,11 +614,12 @@ where
     }
 }
 
-impl<'a, P, T, O, C> ErrorWrapper<'a, P, T, O, C>
+impl< P, T, O> ErrorWrapper< P, T, O>
 where
-    P: Combinator<'a, T, O, C>,
-    O: Clone,
-    C: Cache<'a, O>,
+    P: Combinator<T, O>,
+    T : BorrowParse,
+    O: BorrowParse,
+    
 {
     pub fn new(parser:P,err_msg: &'static str) -> Self{
         ErrorWrapper{parser,err_msg,_phantom:PhantomData}
@@ -720,7 +744,7 @@ macro_rules! __one_of_internal {
 ///
 /// Unlike [`one_of!`], this combinator allows an arbitrary number of parsers
 /// at runtime. However, all parsers **must be of the same type**, which often
-/// requires dynamic dispatch via `Rc<dyn Combinator<'a, _, _, _>>`. 
+/// requires dynamic dispatch via `Rc<dyn Combinator<_, _, _>>`. 
 /// The issue is that this binds the lifetime of the parser to the input.
 /// If this is unacceptable, using [`one_of!`] or leaking then manually freeing the TokenBuffer can decouple the lifetimes.
 ///
@@ -743,16 +767,16 @@ macro_rules! __one_of_internal {
 /// // Define input with an integer and a delimited integer
 /// let tokens: TokenStream = "42 {99}".parse().unwrap();
 /// let buffer = TokenBuffer::new2(tokens);
-/// let input = Input::new(Box::leak(Box::new(buffer))); // Leak the token buffer
+/// let input = Input::new(&buffer);
 /// let mut cache = FlexibleCache::new();
 ///
 /// // Create individual parsers
-/// let int_parser = Rc::new(IntParser) as Rc<dyn Combinator<i64, (), _>>;
+/// let int_parser = Rc::new(IntParser) as Rc<dyn Combinator<i64, ()>>;
 /// let delimited_int_parser = Rc::new(Wrapped {
 ///     wrapper: DelParser(Delimiter::Brace),
 ///     inner: IntParser,
 ///     _phantom: PhantomData,
-/// }) as Rc<dyn Combinator<_, _, _>>;
+/// }) as Rc<dyn Combinator<_, _>>;
 ///
 /// // Create OneOf parser with both alternatives
 /// let one_of_parser = OneOf::new(vec![int_parser, delimited_int_parser].into_boxed_slice(), "Expected int or {int}");
@@ -772,27 +796,29 @@ macro_rules! __one_of_internal {
 /// //}
 /// ```
 
-pub struct OneOf<'a, P, T = (), O = T, C = FlexibleCache<'a, T>>
+pub struct OneOf< P, T = (), O = T>
 where
-    P: Combinator<'a, T, O, C>,
-    C: Cache<'a, O>,
-    O:Clone,
+    P: Combinator<T, O>,
+    T : BorrowParse,
+    
+    O:BorrowParse,
 {
     /// A list of parsers of the **same type**, stored in a boxed slice.
     pub alternatives: Box<[P]>,
     /// The error message returned if all alternatives fail.
     pub err_msg: &'static str,
     /// Phantom data to tie lifetimes and types together.
-    pub _phantom: PhantomData<(Input<'a>, T, O, C)>,
+    pub _phantom: PhantomData<( T, O)>,
 }
 
-impl<'a, P, T, O, C> Combinator<'a, T, O, C> for OneOf<'a, P, T, O, C>
+impl< P, T, O> Combinator<T, O> for OneOf< P, T, O>
 where
-    P: Combinator<'a, T, O, C>,
-    O: Clone,
-    C: Cache<'a, O>,
+    P: Combinator<T, O>,
+    T : BorrowParse,
+    O: BorrowParse,
+    
 {
-    fn parse(&self, input: Input<'a>, cache: &mut C) -> Pakerat<(Input<'a>, T)> {
+    fn parse<'a>(&self, input: Input<'a>, cache: &mut dyn DynCache<'a,O>) -> Pakerat<(Input<'a>, T::Output<'a>)> {
         for alt in &*self.alternatives {
             match alt.parse(input, cache) {
                 Ok(ok) => return Ok(ok),
@@ -806,7 +832,7 @@ where
         )))
     }
 
-    fn parse_ignore(&self, input: Input<'a>, cache: &mut C) -> Pakerat<Input<'a>> {
+    fn parse_ignore<'a>(&self, input: Input<'a>, cache: &mut dyn DynCache<'a,O>) -> Pakerat<Input<'a>> {
         for alt in &*self.alternatives {
             match alt.parse_ignore(input, cache) {
                 Ok(ok) => return Ok(ok),
@@ -821,11 +847,12 @@ where
     }
 }
 
-impl<'a, P, T, O, C> OneOf<'a, P, T, O, C>
+impl< P, T, O> OneOf< P, T, O>
 where
-    P: Combinator<'a, T, O, C>,
-    O: Clone,
-    C: Cache<'a, O>,
+    P: Combinator<T, O>,
+    T : BorrowParse,
+    O: BorrowParse,
+    
 {
     /// Creates a new `OneOf` parser.
     ///
@@ -882,44 +909,49 @@ where
 /// assert_eq!(ident.to_string(), "my_var");
 /// assert_eq!(number, 42);
 /// ```
-pub struct Pair<'b, FIRST, SECOND, T1, T2, O, C = FlexibleCache<'b, O>>
+pub struct Pair< FIRST, SECOND, T1, T2, O>
 where
-    FIRST: Combinator<'b, T1, O, C>,
-    SECOND: Combinator<'b, T2, O, C>,
-    O: Clone,
-    C: Cache<'b, O>,
+    FIRST: Combinator< T1, O>,
+    SECOND: Combinator< T2, O>,
+    T1 : BorrowParse,
+    T2 : BorrowParse,
+
+    O: BorrowParse,
+    
 {
     /// First parser to apply.
     pub first: FIRST,
     /// Second parser to apply.
     pub second: SECOND,
     /// Used for generic type binding.
-    pub _phantom: PhantomData<(Input<'b>, T1, T2, O, C)>,
+    pub _phantom: PhantomData<( T1, T2, O)>,
 }
 
-impl<'a, FIRST, SECOND, T1, T2, O, C> Combinator<'a, (T1, T2), O, C>
-    for Pair<'a, FIRST, SECOND, T1, T2, O, C>
+impl< FIRST, SECOND, T1, T2, O> Combinator<(T1, T2), O>
+    for Pair< FIRST, SECOND, T1, T2, O>
 where
-    FIRST: Combinator<'a, T1, O, C>,
-    SECOND: Combinator<'a, T2, O, C>,
-    O: Clone,
-    C: Cache<'a, O>,
+    FIRST: Combinator<T1, O>,
+    SECOND: Combinator<T2, O>,
+    T1 : BorrowParse,
+    T2 : BorrowParse,
+    O: BorrowParse,
+    
 {
-    fn parse(
+    fn parse<'a>(
         &self,
         input: Input<'a>,
-        cache: &mut C,
-    ) -> Pakerat<(Input<'a>, (T1, T2))> {
+        cache: &mut dyn DynCache<'a,O>,
+    ) -> Pakerat<(Input<'a>, (T1::Output<'a>, T2::Output<'a>))> {
         let (next, first_result) = self.first.parse(input, cache)?;
         let (remaining, second_result) = self.second.parse(next, cache)?;
 
         Ok((remaining, (first_result, second_result)))
     }
 
-    fn parse_ignore(
+    fn parse_ignore<'a>(
         &self,
         input: Input<'a>,
-        cache: &mut C,
+        cache: &mut dyn DynCache<'a,O>,
     ) -> Pakerat<Input<'a>> {
         let next = self.first.parse_ignore(input, cache)?;
         let remaining = self.second.parse_ignore(next, cache)?;
@@ -929,12 +961,13 @@ where
 }
 
 
-impl<'a, FIRST, SECOND, T1, T2, O, C>Pair<'a, FIRST, SECOND, T1, T2, O, C>
+impl< FIRST, SECOND, T1, T2, O>Pair<FIRST, SECOND, T1, T2, O>
 where
-    FIRST: Combinator<'a, T1, O, C>,
-    SECOND: Combinator<'a, T2, O, C>,
-    O: Clone,
-    C: Cache<'a, O>
+    FIRST: Combinator<T1, O>,
+    SECOND: Combinator<T2, O>,
+    T1 : BorrowParse,
+    T2 : BorrowParse,
+    O: BorrowParse,
 {
     pub fn new(first:FIRST,second:SECOND) -> Self{
         Pair{first,second,_phantom:PhantomData}
@@ -943,6 +976,7 @@ where
 
 #[cfg(test)]
 mod tests {
+use crate::cache::FlexibleCache;
 
 use std::rc::Rc;
 use crate::basic_parsers::IntParser;
@@ -973,12 +1007,12 @@ fn test_oneof_parsing() {
     let mut cache = FlexibleCache::new();
 
     // Create individual parsers
-    let int_parser = Rc::new(IntParser) as Rc<dyn Combinator<i64, (), _>>;
+    let int_parser = Rc::new(IntParser) as Rc<dyn Combinator<i64, ()>>;
     let delimited_int_parser = Rc::new(Wrapped {
         wrapper: DelParser(Delimiter::Brace),
         inner: IntParser,
         _phantom: PhantomData,
-    }) as Rc<dyn Combinator<_, _, _>>;
+    }) as Rc<dyn Combinator<_, _>>;
     
     // Create OneOf parser with both alternatives
     let one_of_parser = OneOf::new(vec![int_parser, delimited_int_parser].into_boxed_slice(), "Expected int or {int}");
@@ -1052,7 +1086,7 @@ fn test_one_of_macro() {
 
 #[test]
 fn test_lifetimes() {
-    let parser : Maybe<'static,_>= Maybe::new(Ignore::new(Maybe::new(IdentParser)));
+    let parser : Maybe<_>= Maybe::new(Ignore::new(Maybe::new(IdentParser)));
 
     {
         token_cursor!(buffer, "maybe_var");

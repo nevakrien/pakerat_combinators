@@ -16,12 +16,11 @@
 //! ## Example: Structured Caching with `one_of!`
 //!
 //! ```rust
-//! use pakerat_combinators::combinator::Combinator;
+//! use pakerat_combinators::combinator::{BorrowParse,Combinator,CombinatorExt};
 //! use pakerat_combinators::basic_parsers::{IdentParser, IntParser};
-//! use pakerat_combinators::one_of;
+//! use pakerat_combinators::{one_of};
 //! use pakerat_combinators::core::Input;
-//! use crate::pakerat_combinators::combinator::CombinatorExt;
-//! use pakerat_combinators::cache::{CachedComb, BasicCache, FixedCachedComb};
+//! use pakerat_combinators::cache::{CachedComb, BasicCache};
 //! use syn::buffer::TokenBuffer;
 //! use proc_macro2::Ident;
 //!
@@ -30,6 +29,11 @@
 //!     Ident(Ident),
 //!     Number(i64),
 //! }
+//!
+//! impl BorrowParse for ParsedValue{
+//!    type Output<'a>= ParsedValue;//does not depend on input lifetime
+//! }
+//!
 //!
 //! #[derive(Clone, Copy, Debug)]
 //! enum ParserType {
@@ -44,13 +48,12 @@
 //!     }
 //! }
 //! type MyCache<'a> = BasicCache::<'a,CACHE_SIZE, ParsedValue>;
-//! type MyCacheComb<'a,INNER,T> = FixedCachedComb::<'a,CACHE_SIZE,INNER,T>;
 //!
 //! // Define a parser that can handle both identifiers and numbers.
 //! let combined_parser = one_of!("expected an identifier or an integer",
-//!     MyCacheComb::<_,ParsedValue>::new(
+//!     CachedComb::<_,ParsedValue>::new(
 //!         IdentParser.map(ParsedValue::Ident), ParserType::Ident.into(), "infinite loop bug"),
-//!     MyCacheComb::<_,ParsedValue>::new(
+//!     CachedComb::<_,ParsedValue>::new(
 //!         IntParser.map(ParsedValue::Number), ParserType::Number.into(), "infinite loop bug")
 //! );
 //!
@@ -74,6 +77,7 @@
 //! ```
 
 
+use crate::combinator::BorrowParse;
 use crate::core::ParseError;
 use std::marker::PhantomData;
 use crate::combinator::Combinator;
@@ -162,96 +166,115 @@ impl<T: PartialEq> PartialEq for CacheStatus<T> {
 }
 
 impl<T: Eq> Eq for CacheStatus<T> {}
-pub type CacheEntry<'a,T = ()> = CacheStatus<Pakerat<(Input<'a>,T)>>;
+// #[derive(Default)]
+pub struct CacheEntry<'a, T: BorrowParse = ()>(
+    pub CacheStatus<Pakerat<(Input<'a>, T::Output<'a>)>>
+);
+
+impl<T:BorrowParse> Default for CacheEntry<'_, T>{
+
+fn default() -> Self { CacheEntry(CacheStatus::default()) }
+}
+
+impl<'a, T: BorrowParse> From<CacheStatus<Pakerat<(Input<'a>, T::Output<'a>)>>> for CacheEntry<'a,T>{
+fn from(x: CacheStatus<Pakerat<(Input<'a>, <T as BorrowParse>::Output<'a>)>>) -> Self { Self{0:x}}
+}
+
+impl<'a, T: BorrowParse> From<CacheEntry<'a,T>> for  CacheStatus<Pakerat<(Input<'a>, T::Output<'a>)>>{
+fn from(x: CacheEntry<'a,T>) -> Self {x.0}
+}
+
+impl<'a, T: BorrowParse> Clone for CacheEntry<'a, T>
+where
+    T::Output<'a>: Clone,
+{
+    fn clone(&self) -> Self {
+        Self(self.0.clone())
+    }
+}
+
+
 
 impl<'a, T> CacheEntry<'a, T>
 where
-    T: Clone,
-{	
-	///this is used to finalize the result of a search
-	///
-	///it will automatically move pending results to full errors and panic on an empty cache
-    pub fn finalize<F: FnOnce() -> ParseError>(&mut self, err_f: F) -> Pakerat<(Input<'a>,T)> {
-        match self {
+    T: BorrowParse,
+    T::Output<'a> : Clone
+{   
+    ///this is used to finalize the result of a search
+    ///
+    ///it will automatically move pending results to full errors and panic on an empty cache
+    pub fn finalize<F: FnOnce() -> ParseError>(&mut self, err_f: F) -> Pakerat<(Input<'a>,T::Output<'a>)> {
+        match &self.0 {
             CacheStatus::Empty => unreachable!("bad finalize call on an empty cache"),
             CacheStatus::Pending => {
-            	let err =  Err(PakeratError::Recursive(err_f()));
-            	*self = CacheStatus::Full(err.clone());
-            	err
-            	
+                let err =  Err(PakeratError::Recursive(err_f()));
+                self.0 = CacheStatus::Full(err.clone());
+                err
+                
             },
             CacheStatus::Full(res) => res.clone(),
         }
     }
 }
 
-
-
-
 pub type ArrayCache<'a,const L: usize,T = ()> = FixedCollection<CacheEntry<'a,T>, L>;
-
-#[test]
-fn array_cache() {
-	let mut map: ArrayCache<9,i8> = ArrayCache::default();
-	assert!(matches!(*map.get(3).unwrap(),CacheStatus::Empty));
-}
 
 ///a cache that allways returns a value in get
 #[repr(transparent)]
 #[derive(Clone)]
-pub struct HashCache<'a,T : Clone = ()>(pub HashMap<usize,CacheEntry<'a,T>>);
-impl<'a,T : Clone> Collection<CacheEntry<'a,T>> for HashCache<'a,T>{
-	#[inline]
-	fn get(&mut self, key: usize) -> Option<&mut CacheEntry<'a,T>>  {
-		Some(self.0.entry(key).or_insert(CacheStatus::Empty))
-	}
+pub struct HashCache<'a,T : BorrowParse = ()>(pub HashMap<usize,CacheEntry<'a,T>>) where T::Output<'a> : Clone;
+impl<'a,T : BorrowParse> Collection<CacheEntry<'a,T>> for HashCache<'a,T> where T::Output<'a> : Clone{
+    #[inline]
+    fn get(&mut self, key: usize) -> Option<&mut CacheEntry<'a,T>>  {
+        Some(self.0.entry(key).or_insert(CacheStatus::Empty.into()))
+    }
 }
 
+
 // Implement `Index` for immutable access
-impl<'a, T:Clone> Index<usize> for HashCache<'a, T> {
+impl<'a, T:BorrowParse> Index<usize> for HashCache<'a, T>  where T::Output<'a> : Clone{
     type Output = CacheEntry<'a,T>;
 
     fn index(&self, key: usize) -> &Self::Output {
-        self.0.get(&key).unwrap_or(&CacheStatus::Empty)
+        self.0.get(&key).unwrap_or(&CacheEntry(CacheStatus::Empty))
     }
 }
-impl<T:Clone> IndexMut<usize> for HashCache<'_,T> {
+impl<'a,T:BorrowParse> IndexMut<usize> for HashCache<'a,T> where T::Output<'a> : Clone{
     fn index_mut(&mut self, key: usize) -> &mut Self::Output {
-        self.0.entry(key).or_insert(CacheStatus::Empty)
+        self.0.entry(key).or_insert(CacheStatus::Empty.into())
     }
 }
 
-impl<T:Clone> Default for HashCache<'_,T>{
+impl<'a, T:BorrowParse> Default for HashCache<'a,T> where T::Output<'a> : Clone{
 
 fn default() -> Self { HashCache(HashMap::new()) }
 }
 
 #[test]
 fn hash_cache() {
-	let mut map: HashCache<i8> = HashCache::default();
-	assert!(matches!(*map.get(3).unwrap(),CacheStatus::Empty));
+    let mut map: HashCache<i8> = HashCache::default();
+    assert!(matches!(*map.get(3).unwrap(),CacheEntry(CacheStatus::Empty)));
 }
 
-pub trait CacheSpot<'a, T:Clone=()>: Collection<CacheEntry<'a, T>> {
-	fn clear(&mut self);
+pub trait CacheSpot<'a, T : BorrowParse=()>: Collection<CacheEntry<'a, T>> {
+    fn clear(&mut self);
 }
 
-impl<'a, const L: usize,T:Clone> CacheSpot<'a, T> for ArrayCache<'a,L,T> 
-{	
-	fn clear(&mut self) {
-		for x in self.0.iter_mut() {
-			*x = CacheStatus::Empty;
-		}
-	}
+impl<'a, const L: usize,T:BorrowParse> CacheSpot<'a, T> for ArrayCache<'a,L,T> where T::Output<'a> : Clone
+{   
+    fn clear(&mut self) {
+        for x in self.0.iter_mut() {
+            *x = CacheStatus::Empty.into();
+        }
+    }
 }
 
-impl<'a,T:Clone> CacheSpot<'a, T> for HashCache<'a,T> 
-{	
-	fn clear(&mut self) {
-		self.0 = HashMap::new();
-	}
+impl<'a,T:BorrowParse> CacheSpot<'a, T> for HashCache<'a,T> where T::Output<'a> : Clone
+{   
+    fn clear(&mut self) {
+        self.0 = HashMap::new();
+    }
 }
-
 
 /// A `Cache` is meant to be used with [`Combinator`].
 /// 
@@ -261,7 +284,7 @@ impl<'a,T:Clone> CacheSpot<'a, T> for HashCache<'a,T>
 /// In the worst case, the time complexity is O(inputs_len * parse_types).
 /// 
 /// As a bonus, caching also prevents accidental infinite recursion.
-pub trait Cache<'a, T : Clone = ()> {
+pub trait Cache<'a, T : BorrowParse  = ()>  where T::Output<'a> : Clone {
     /// The type of cache slot stored in the cache
     type Item: CacheSpot<'a, T>;
 
@@ -270,6 +293,20 @@ pub trait Cache<'a, T : Clone = ()> {
 
 }
 
+///A dynamic runtime cache derived from [`Cache`]
+pub trait DynCache<'a,T =()> {
+    /// Retrieves the cache for the byte anotated by slot
+    fn get_dyn_slot(&mut self, slot: usize) -> &mut dyn CacheSpot<'a,T>;
+}
+
+
+impl<'a, T: BorrowParse, C: Cache<'a, T>> DynCache<'a, T> for C where T::Output<'a> : Clone {
+    fn get_dyn_slot(&mut self, slot: usize) -> &mut dyn CacheSpot<'a, T> {
+        self.get_slot(slot) // Automatically converts to `dyn CacheSpot`
+    }
+}
+
+
 /// this function implements caching which will never break any valid peg parser and will never return wrong results.
 ///
 /// it detects most potential infinite loops by keeping track of all the pending calls. 
@@ -277,59 +314,34 @@ pub trait Cache<'a, T : Clone = ()> {
 /// however it will still reject some grammers.
 /// for instance "expr + term => expr" would not work because it causes an infinite left recursive loop. 
 /// but "term + expr => expr" will work
-pub fn parse_cached<'a, T:Clone,P,FE,C>(cache: &mut C,input:Input<'a>, key: usize ,parser:&P,recurse_err:FE) -> Pakerat<(Input<'a>,T)>
+pub fn parse_cached<'a, T,P,FE>(cache: &mut dyn DynCache<'a,T>,input:Input<'a>, key: usize ,parser:&P,recurse_err:FE) -> Pakerat<(Input<'a>,T::Output<'a>)>
 where 
-C: Cache<'a,T>,
-P:Combinator<'a,T,T,C> + ?Sized, FE:FnOnce() -> ParseError
-{	
-	let id = input.span().byte_range().start;
-	let spot = cache.get_slot(id).get(key).expect("missing key");
-	match spot{
-		CacheStatus::Full(res) => res.clone(),
-		CacheStatus::Empty => {
-			*spot = CacheStatus::Pending;
-			let ans = parser.parse(input,cache);
+T:BorrowParse,
+for<'b > T::Output<'b> :Clone,
 
-			//need to get spot again since parse may of changed it
-			let spot = cache.get_slot(id).get(key).expect("missing key");
-			*spot = CacheStatus::Full(ans.clone());
-			ans
-		}
-		CacheStatus::Pending => {
-			let err =  Err(PakeratError::Recursive(recurse_err()));
-        	*spot = CacheStatus::Full(err.clone());
-        	err
-		},
-	}
+P:Combinator<T,T> + ?Sized, FE:FnOnce() -> ParseError
+{   
+    let id = input.span().byte_range().start;
+    let spot = cache.get_dyn_slot(id).get(key).expect("missing key");
+    match &spot.0{
+        CacheStatus::Full(res) => res.clone(),
+        CacheStatus::Empty => {
+            spot.0 = CacheStatus::Pending;
+            let ans = parser.parse(input,cache);
+            // let ans = place_holder(parser,input,cache);
+
+            //need to get spot again since parse may of changed it
+            let spot = cache.get_dyn_slot(id).get(key).expect("missing key");
+            spot.0 = CacheStatus::Full(ans.clone());
+            ans
+        }
+        CacheStatus::Pending => {
+            let err =  Err(PakeratError::Recursive(recurse_err()));
+            spot.0 = CacheStatus::Full(err.clone());
+            err
+        },
+    }
 }
-
-// /// A `Cache` is meant to be used with [`Combinator`].
-// /// 
-// /// Caching guarantees linear time complexity in all public APIs (including recursive ones).
-// /// This is achieved by erroring when the same input is attempted to be parsed a second time.
-// /// 
-// /// In the worst case, the time complexity is O(inputs_len * parse_types).
-// /// 
-// /// As a bonus, caching also prevents accidental infinite recursion.
-
-// pub trait Cache<'a, T : Clone = ()> {
-//     /// The type of cache slot stored in the cache
-//     type Item: CacheSpot<'a, T>;
-
-//     /// Retrieves the cache for the byte anotated by slot
-//     fn get_slot(&mut self, slot: usize) -> &mut Self::Item;
-// }
-
-// pub trait DynCache<'a,T:Clone =()>{
-// 	/// Retrieves the cache for the byte anotated by slot
-//     fn get_dyn_slot(&mut self, slot: usize) -> &mut dyn CacheSpot<'a,T>;
-// }
-
-// impl<'a, T: Clone, C: Cache<'a, T>> DynCache<'a, T> for C {
-//     fn get_dyn_slot(&mut self, slot: usize) -> &mut dyn CacheSpot<'a, T> {
-//         self.get_slot(slot) // Automatically converts to `dyn CacheSpot`
-//     }
-// }
 
 // /// this function implements caching which will never break any valid peg parser and will never return wrong results.
 // ///
@@ -365,7 +377,7 @@ P:Combinator<'a,T,T,C> + ?Sized, FE:FnOnce() -> ParseError
 // 	}
 // }
 
-impl<'a, T : Clone , C > Cache<'a,T> for HashMap<usize,C> where C : CacheSpot<'a, T> + Default{
+impl<'a, T : BorrowParse , C > Cache<'a,T> for HashMap<usize,C> where C : CacheSpot<'a, T> + Default, <T as BorrowParse>::Output<'a>: Clone{
 	type Item = C;
 	fn get_slot(&mut self, slot: usize) -> &mut C {
 		self.entry(slot).or_default()
@@ -376,98 +388,40 @@ impl<'a, T : Clone , C > Cache<'a,T> for HashMap<usize,C> where C : CacheSpot<'a
 pub type BasicCache<'a,const L: usize,T=()>= HashMap<usize, ArrayCache<'a,L, T>>;
 /// this cache can work with any id range.
 pub type FlexibleCache<'a,T=()>= HashMap<usize, HashCache<'a, T>>;
-// pub type StrCache<'a,T=(),E=syn::Error>= HashMap<usize, HashCache<'a,&'a str, T, E>>;
-
-impl<'a, T: Clone, C> Cache<'a, T> for Vec<C>
-where
-    C: CacheSpot<'a, T> + Default,
-{
-    type Item = C;
-
-    fn get_slot(&mut self, slot: usize) -> &mut C {
-        if slot >= self.len() {
-            self.resize_with(slot + 1,C::default);
-        }
-        &mut self[slot]
-    }
-}
 
 
 /// A combinator that caches the results of an inner parser, reducing redundant computations.
 ///
-/// ## Type Alias Recommendation
-/// Since `CachedComb` has many generics, it's recommended to create a type alias for ease of use.
-/// A good pattern is to define an alias that fits your cache setup:
-///
-/// ```rust
-/// use pakerat_combinators::cache::{CachedComb, FlexibleCache};
-///
-/// type MyCachedParser<'a, P> = CachedComb<'a, P, (), FlexibleCache<'a, ()>>;
-/// ```
-///
-/// This alias simplifies usage, assuming you want:
-/// - `usize` as the cache key type.
-/// - A `FlexibleCache` for storing results.
-/// - Error messages stored as `&'static str`.
-///
 /// ## Example Usage
-/// Below are examples of using `CachedComb` with `UsizeCachedComb` and `FixedCachedComb`.
-///
-/// ### Using `UsizeCachedComb`
+/// ### Using `CachedComb`
 /// ```rust
 /// use pakerat_combinators::combinator::Combinator;
 /// use pakerat_combinators::basic_parsers::IdentParser;
 /// use pakerat_combinators::core::Input;
-/// use pakerat_combinators::cache::{CachedComb, FlexibleCache,UsizeCachedComb};
+/// use pakerat_combinators::cache::CachedComb;
+/// use pakerat_combinators::cache::FlexibleCache;
 /// use syn::buffer::{TokenBuffer};
-///
 ///
 /// let tokens = "cached_var".parse().unwrap();
 /// let buffer = TokenBuffer::new2(tokens);
 /// let input = Input::new(&buffer);
 ///
-/// let my_parser = UsizeCachedComb::new(IdentParser, 0, "Cache miss error");
+/// let my_parser = CachedComb::new(IdentParser, 0, "Cache miss error");
 ///
 /// let mut cache = FlexibleCache::<_>::default();
 /// let (_, parsed_ident) = my_parser.parse(input, &mut cache).unwrap();
 ///
 /// assert_eq!(parsed_ident.to_string(), "cached_var");
 ///
-/// // Parsing again should retrieve from the cache (even if the input is diffrent)
+/// // Parsing again should retrieve from the cache
 /// let (_, cached_ident) = my_parser.parse(Input::empty(), &mut cache).unwrap();
 /// assert_eq!(cached_ident.to_string(), "cached_var");
 /// ```
-///
-/// ### Using `FixedCachedComb` with `ArrayCache`
-/// ```rust
-/// use pakerat_combinators::combinator::Combinator;
-/// use pakerat_combinators::basic_parsers::IdentParser;
-/// use pakerat_combinators::core::Input;
-/// use pakerat_combinators::cache::{CachedComb, BasicCache,FixedCachedComb};
-/// use syn::buffer::{TokenBuffer};
-/// use proc_macro2::Ident;
-///
-///
-/// let tokens = "fixed_cached_var".parse().unwrap();
-/// let buffer = TokenBuffer::new2(tokens);
-/// let input = Input::new(&buffer);
-///
-/// let my_parser = FixedCachedComb::<8, _,_>::new(IdentParser, 0, "Cache miss error");
-///
-/// let mut cache = BasicCache::<8,Ident>::new();
-/// let (_, parsed_ident) = my_parser.parse(input, &mut cache).unwrap();
-///
-/// assert_eq!(parsed_ident.to_string(), "fixed_cached_var");
-///
-/// // Parsing again should retrieve from the cache (even if the input is diffrent)
-/// let (_, cached_ident) = my_parser.parse(Input::empty(), &mut cache).unwrap();
-/// assert_eq!(cached_ident.to_string(), "fixed_cached_var");
-/// ```
-pub struct CachedComb<'a, INNER,T =(), C = FlexibleCache<'a,T>>
+pub struct CachedComb<INNER,T =()>
 where
-    INNER: Combinator<'a, T, T,C>,
-    T: Clone,
-    C: Cache<'a, T>,
+    INNER: Combinator<T, T>,
+   	T:BorrowParse,
+	for<'b > T::Output<'b> :Clone,
 
 {   
     pub inner: INNER,
@@ -475,30 +429,30 @@ where
     pub message:&'static str,
 
     ///used so we can have generics
-    pub _phantom: PhantomData<(Input<'a>, T,C)>,
+    pub _phantom: PhantomData<T>,
 }
 
-pub type UsizeCachedComb<'a, INNER,T =()> = CachedComb<'a,INNER, T,FlexibleCache<'a,T>>;
-pub type FixedCachedComb<'a,const L: usize, INNER,T =()> = CachedComb<'a,INNER, T ,BasicCache<'a, L,T>>;
+// pub type UsizeCachedComb<'a, INNER,T =()> = CachedComb<'a,INNER, T,FlexibleCache<'a,T>>;
+// pub type FixedCachedComb<'a,const L: usize, INNER,T =()> = CachedComb<'a,INNER, T ,BasicCache<'a, L,T>>;
 
-impl<'a, INNER,T, C> Combinator<'a, T, T,C> for CachedComb <'a,INNER, T,C>
-where  
-	INNER: Combinator<'a, T, T,C>,
-    T: Clone,
-    C: Cache<'a, T>,
+impl<INNER,T> Combinator< T, T> for CachedComb <INNER, T>
+where
+    INNER: Combinator<T, T>,
+   	T:BorrowParse,
+	for<'b > T::Output<'b> :Clone,
 {
 
-    fn parse(&self, input: Input<'a>, cache: &mut C) -> Pakerat<(Input<'a>, T)> { 
+    fn parse<'a>(&self, input: Input<'a>, cache: &mut dyn DynCache<'a,T>) -> Pakerat<(Input<'a>, T::Output<'a>)> { 
     	parse_cached(cache,input,self.key,&self.inner,|| {ParseError::Syn(syn::Error::new(input.span(),self.message.to_string()))})
     }
 }
 
-impl<'a,INNER, T ,C> CachedComb<'a,INNER, T ,C> 
+impl<INNER, T > CachedComb<INNER, T> 
 
 where
-    INNER: Combinator<'a, T, T,C>,
-    T: Clone,
-    C: Cache<'a, T>,
+    INNER: Combinator<T, T>,
+   	T:BorrowParse,
+	for<'b > T::Output<'b> :Clone,
 {
 	pub fn new(inner:INNER,key:usize,message:&'static str) -> Self{
 		CachedComb{inner,key,message,_phantom:PhantomData}
