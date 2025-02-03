@@ -25,14 +25,12 @@
 //! use syn::buffer::TokenBuffer;
 //! use proc_macro2::Ident;
 //!
-//! /// Enum representing different possible parsed values stored in the cache.
 //! #[derive(Clone, Debug)]
 //! enum ParsedValue {
 //!     Ident(Ident),
 //!     Number(i64),
 //! }
 //!
-//! /// Enum representing different parser types, each assigned a unique ID.
 //! #[derive(Clone, Copy, Debug)]
 //! enum ParserType {
 //!     Ident = 0,
@@ -51,16 +49,15 @@
 //! // Define a parser that can handle both identifiers and numbers.
 //! let combined_parser = one_of!("expected an identifier or an integer",
 //!     MyCacheComb::<_,ParsedValue>::new(
-//!         IdentParser.map(ParsedValue::Ident), ParserType::Ident.into(), "Cache miss error"),
+//!         IdentParser.map(ParsedValue::Ident), ParserType::Ident.into(), "infinite loop bug"),
 //!     MyCacheComb::<_,ParsedValue>::new(
-//!         IntParser.map(ParsedValue::Number), ParserType::Number.into(), "Cache miss error")
+//!         IntParser.map(ParsedValue::Number), ParserType::Number.into(), "infinite loop bug")
 //! );
 //!
 //! let tokens = "variable 42".parse().unwrap();
 //! let buffer = TokenBuffer::new2(tokens);
 //! let input = Input::new(&buffer);
 //!
-//! // Create a cache instance with structured storage
 //! let mut cache = MyCache::default();
 //!
 //! // Parse the first token (identifier) and store it in the cache
