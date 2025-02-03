@@ -268,38 +268,102 @@ pub trait Cache<'a, T : Clone = ()> {
     /// Retrieves the cache for the byte anotated by slot
     fn get_slot(&mut self, slot: usize) -> &mut Self::Item;
 
-    /// this function implements caching which will never break any valid peg parser and will never return wrong results.
-	///
-	/// it detects most potential infinite loops by keeping track of all the pending calls. 
-	///
-	/// however it will still reject some grammers.
-	/// for instance "expr + term => expr" would not work because it causes an infinite left recursive loop. 
-	/// but "term + expr => expr" will work
-    fn parse_cached<P,FE>(&mut self,input:Input<'a>, key: usize ,parser:&P,recurse_err:FE) -> Pakerat<(Input<'a>,T)>
-    where P:Combinator<'a,T,T,Self> + ?Sized, FE:FnOnce() -> ParseError, Self: Sized
-    {	
-    	let id = input.span().byte_range().start;
-    	let spot = self.get_slot(id).get(key).expect("missing key");
-    	match spot{
-    		CacheStatus::Full(res) => res.clone(),
-    		CacheStatus::Empty => {
-    			*spot = CacheStatus::Pending;
-    			let ans = parser.parse(input,self);
-
-    			//need to get spot again since parse may of changed it
-    			let spot = self.get_slot(id).get(key).expect("missing key");
-    			*spot = CacheStatus::Full(ans.clone());
-    			ans
-    		}
-    		CacheStatus::Pending => {
-    			let err =  Err(PakeratError::Recursive(recurse_err()));
-            	*spot = CacheStatus::Full(err.clone());
-            	err
-    		},
-    	}
-    }
-
 }
+
+/// this function implements caching which will never break any valid peg parser and will never return wrong results.
+///
+/// it detects most potential infinite loops by keeping track of all the pending calls. 
+///
+/// however it will still reject some grammers.
+/// for instance "expr + term => expr" would not work because it causes an infinite left recursive loop. 
+/// but "term + expr => expr" will work
+pub fn parse_cached<'a, T:Clone,P,FE,C>(cache: &mut C,input:Input<'a>, key: usize ,parser:&P,recurse_err:FE) -> Pakerat<(Input<'a>,T)>
+where 
+C: Cache<'a,T>,
+P:Combinator<'a,T,T,C> + ?Sized, FE:FnOnce() -> ParseError
+{	
+	let id = input.span().byte_range().start;
+	let spot = cache.get_slot(id).get(key).expect("missing key");
+	match spot{
+		CacheStatus::Full(res) => res.clone(),
+		CacheStatus::Empty => {
+			*spot = CacheStatus::Pending;
+			let ans = parser.parse(input,cache);
+
+			//need to get spot again since parse may of changed it
+			let spot = cache.get_slot(id).get(key).expect("missing key");
+			*spot = CacheStatus::Full(ans.clone());
+			ans
+		}
+		CacheStatus::Pending => {
+			let err =  Err(PakeratError::Recursive(recurse_err()));
+        	*spot = CacheStatus::Full(err.clone());
+        	err
+		},
+	}
+}
+
+// /// A `Cache` is meant to be used with [`Combinator`].
+// /// 
+// /// Caching guarantees linear time complexity in all public APIs (including recursive ones).
+// /// This is achieved by erroring when the same input is attempted to be parsed a second time.
+// /// 
+// /// In the worst case, the time complexity is O(inputs_len * parse_types).
+// /// 
+// /// As a bonus, caching also prevents accidental infinite recursion.
+
+// pub trait Cache<'a, T : Clone = ()> {
+//     /// The type of cache slot stored in the cache
+//     type Item: CacheSpot<'a, T>;
+
+//     /// Retrieves the cache for the byte anotated by slot
+//     fn get_slot(&mut self, slot: usize) -> &mut Self::Item;
+// }
+
+// pub trait DynCache<'a,T:Clone =()>{
+// 	/// Retrieves the cache for the byte anotated by slot
+//     fn get_dyn_slot(&mut self, slot: usize) -> &mut dyn CacheSpot<'a,T>;
+// }
+
+// impl<'a, T: Clone, C: Cache<'a, T>> DynCache<'a, T> for C {
+//     fn get_dyn_slot(&mut self, slot: usize) -> &mut dyn CacheSpot<'a, T> {
+//         self.get_slot(slot) // Automatically converts to `dyn CacheSpot`
+//     }
+// }
+
+// /// this function implements caching which will never break any valid peg parser and will never return wrong results.
+// ///
+// /// it detects most potential infinite loops by keeping track of all the pending calls. 
+// ///
+// /// however it will still reject some grammers.
+// /// for instance "expr + term => expr" would not work because it causes an infinite left recursive loop. 
+// /// but "term + expr => expr" will work
+// pub fn parse_cached<'a,T,P,FE>(cache: &mut dyn DynCache<'a,T>,input:Input<'a>, key: usize ,parser:&P,recurse_err:FE) -> Pakerat<(Input<'a>,T)>
+// where
+// T:Clone ,
+// P:Combinator<T,T>, 
+// FE:FnOnce() -> ParseError, 
+// {	
+// 	let id = input.span().byte_range().start;
+// 	let spot = cache.get_dyn_slot(id).get(key).expect("missing key");
+// 	match spot{
+// 		CacheStatus::Full(res) => res.clone(),
+// 		CacheStatus::Empty => {
+// 			*spot = CacheStatus::Pending;
+// 			let ans = parser.parse(input,cache);
+
+// 			//need to get spot again since parse may of changed it
+// 			let spot = cache.get_dyn_slot(id).get(key).expect("missing key");
+// 			*spot = CacheStatus::Full(ans.clone());
+// 			ans
+// 		}
+// 		CacheStatus::Pending => {
+// 			let err =  Err(PakeratError::Recursive(recurse_err()));
+//         	*spot = CacheStatus::Full(err.clone());
+//         	err
+// 		},
+// 	}
+// }
 
 impl<'a, T : Clone , C > Cache<'a,T> for HashMap<usize,C> where C : CacheSpot<'a, T> + Default{
 	type Item = C;
@@ -425,7 +489,7 @@ where
 {
 
     fn parse(&self, input: Input<'a>, cache: &mut C) -> Pakerat<(Input<'a>, T)> { 
-    	cache.parse_cached(input,self.key,&self.inner,|| {ParseError::Syn(syn::Error::new(input.span(),self.message.to_string()))})
+    	parse_cached(cache,input,self.key,&self.inner,|| {ParseError::Syn(syn::Error::new(input.span(),self.message.to_string()))})
     }
 }
 
