@@ -1,10 +1,10 @@
 use crate::cache::DynCache;
 use crate::combinator::BorrowParse;
+use crate::combinator::Combinator;
 use crate::combinator::Pakerat;
 use crate::core::Input;
 use std::cell::OnceCell;
 use std::marker::PhantomData;
-use crate::combinator::Combinator;
 
 /// A combinator that allows for recursive parsing by deferring initialization.
 ///
@@ -53,12 +53,18 @@ use crate::combinator::Combinator;
 /// let (remaining, result) = parser.parse(input, &mut cache).unwrap();
 /// assert!(remaining.eof());
 /// ```
-pub struct RecursiveParser<'parser ,T:BorrowParse, O:BorrowParse = T> {
+pub struct RecursiveParser<'parser, T: BorrowParse, O: BorrowParse = T> {
     cell: OnceCell<&'parser dyn Combinator<T, O>>,
-    _phantom: PhantomData<( T, O)>,
+    _phantom: PhantomData<(T, O)>,
 }
 
-impl<'parser , T:BorrowParse, O:BorrowParse> RecursiveParser<'parser , T, O> {
+impl<T: BorrowParse, O: BorrowParse> Default for RecursiveParser<'_, T, O> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<'parser, T: BorrowParse, O: BorrowParse> RecursiveParser<'parser, T, O> {
     /// Creates a new recursive parser without an initial implementation.
     ///
     /// The parser must be initialized using [`set`] before use.
@@ -72,9 +78,9 @@ impl<'parser , T:BorrowParse, O:BorrowParse> RecursiveParser<'parser , T, O> {
     /// Initializes the recursive parser with a concrete implementation.
     ///
     /// This function should only be called once.
-    pub fn set<P>(&self, parser:&'parser P)
+    pub fn set<P>(&self, parser: &'parser P)
     where
-        P: Combinator< T, O> + 'parser  ,
+        P: Combinator<T, O> + 'parser,
     {
         self.cell
             .set(parser)
@@ -83,17 +89,26 @@ impl<'parser , T:BorrowParse, O:BorrowParse> RecursiveParser<'parser , T, O> {
 
     /// Retrieves the underlying parser, or panics if used before initialization.
     fn get(&self) -> &(dyn Combinator<T, O> + 'parser) {
-        self.cell.get().expect("Used uninitialized recursive parser")
+        self.cell
+            .get()
+            .expect("Used uninitialized recursive parser")
     }
 }
 
-
-impl<'parser, T:BorrowParse, O:BorrowParse> Combinator< T, O> for RecursiveParser<'parser, T, O> {
-    fn parse<'a>(&self, input: Input<'a>, state: &mut dyn DynCache<'a,O>) -> Pakerat<(Input<'a>, T::Output<'a>)> {
+impl<T: BorrowParse, O: BorrowParse> Combinator<T, O> for RecursiveParser<'_, T, O> {
+    fn parse<'a>(
+        &self,
+        input: Input<'a>,
+        state: &mut dyn DynCache<'a, O>,
+    ) -> Pakerat<(Input<'a>, T::Output<'a>)> {
         self.get().parse(input, state)
     }
 
-    fn parse_ignore<'a>(&self, input: Input<'a>, state: &mut dyn DynCache<'a,O>) -> Pakerat<Input<'a>> {
+    fn parse_ignore<'a>(
+        &self,
+        input: Input<'a>,
+        state: &mut dyn DynCache<'a, O>,
+    ) -> Pakerat<Input<'a>> {
         self.get().parse_ignore(input, state)
     }
 }

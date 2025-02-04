@@ -1,14 +1,14 @@
-use std::fmt::Formatter;
 use crate::core::fmt::Display;
-use std::fmt;
-use std::cmp::Ordering;
-use syn::buffer::TokenBuffer;
 use proc_macro2::{Delimiter, Ident, Literal, Punct, Span, TokenStream, TokenTree};
+use std::cmp::Ordering;
+use std::fmt;
+use std::fmt::Formatter;
+use syn::buffer::TokenBuffer;
 
-use syn::buffer::{Cursor};
 use proc_macro2::extra::DelimSpan;
+use syn::buffer::Cursor;
 
-pub fn get_start_del(del:Delimiter) -> &'static str {
+pub fn get_start_del(del: Delimiter) -> &'static str {
     match del {
         Delimiter::Parenthesis => "(",
         Delimiter::Bracket => "[",
@@ -17,7 +17,7 @@ pub fn get_start_del(del:Delimiter) -> &'static str {
     }
 }
 
-pub fn get_end_del(del:Delimiter) -> &'static str {
+pub fn get_end_del(del: Delimiter) -> &'static str {
     match del {
         Delimiter::Parenthesis => ")",
         Delimiter::Bracket => "]",
@@ -33,13 +33,13 @@ pub struct DelMark {
     span: Span,
 }
 
-impl DelMark{
+impl DelMark {
     #[inline(always)]
-    pub fn del(&self) -> Delimiter{
+    pub fn del(&self) -> Delimiter {
         self.del
     }
     #[inline(always)]
-    pub fn span(&self) -> Span{
+    pub fn span(&self) -> Span {
         self.span
     }
 }
@@ -54,36 +54,43 @@ pub enum Found {
 }
 
 impl Found {
-    pub fn start_of(spot:Input) -> Self{
-        if spot.eof(){
-            return spot.block_end.map(Found::End).unwrap_or_else(||{
-                Found::EOF(spot.span())
-            });
+    pub fn start_of(spot: Input) -> Self {
+        if spot.eof() {
+            return spot
+                .block_end
+                .map(Found::End)
+                .unwrap_or_else(|| Found::EOF(spot.span()));
         }
-        match spot.any_group(){
-            Some((_,del,del_span,_)) => Found::Start(DelMark{del,span:del_span.open()}),
-            None => Found::Spot(spot.span())
+        match spot.any_group() {
+            Some((_, del, del_span, _)) => Found::Start(DelMark {
+                del,
+                span: del_span.open(),
+            }),
+            None => Found::Spot(spot.span()),
         }
     }
 
     ///end of the current cursor not the entire input
-    pub fn end_of(spot:Input) -> Self{
-        if spot.eof(){
-            return spot.block_end.map(Found::End).unwrap_or_else(||{
-                Found::EOF(spot.span())
-            });
+    pub fn end_of(spot: Input) -> Self {
+        if spot.eof() {
+            return spot
+                .block_end
+                .map(Found::End)
+                .unwrap_or_else(|| Found::EOF(spot.span()));
         }
-        match spot.any_group(){
-            Some((_,del,del_span,_)) => Found::Start(DelMark{del,span:del_span.close()}),
-            None => Found::Spot(spot.span())
+        match spot.any_group() {
+            Some((_, del, del_span, _)) => Found::Start(DelMark {
+                del,
+                span: del_span.close(),
+            }),
+            None => Found::Spot(spot.span()),
         }
     }
-
 
     ///Retrieves the span associated with this `Found` variant. (for EOF we return the elemnt before)
     pub fn span(&self) -> Span {
         match self {
-            Found::Spot(span)|Found::EOF(span) => *span,
+            Found::Spot(span) | Found::EOF(span) => *span,
             Found::Start(del_mark) | Found::End(del_mark) => del_mark.span(),
         }
     }
@@ -93,9 +100,9 @@ impl fmt::Display for Found {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Found::Spot(span) => match span.source_text() {
-                Some(s) => write!(f, "{}",s),
-                None => write!(f, "<missing source : {:?}>",span),
-            }
+                Some(s) => write!(f, "{}", s),
+                None => write!(f, "<missing source : {:?}>", span),
+            },
             Found::Start(del_mark) => write!(f, "{}", get_start_del(del_mark.del())),
             Found::End(del_mark) => write!(f, "{}", get_end_del(del_mark.del())),
             Found::EOF(_span) => write!(f, "EOF"),
@@ -112,10 +119,10 @@ pub enum Expected {
 }
 
 impl Expected {
-    pub fn start_of(spot:Input<'_>) -> Self{
-        match spot.any_group(){
-            Some((_,del,_,_)) => Expected::Start(del),
-            None => Expected::Spot(spot.span())
+    pub fn start_of(spot: Input<'_>) -> Self {
+        match spot.any_group() {
+            Some((_, del, _, _)) => Expected::Start(del),
+            None => Expected::Spot(spot.span()),
         }
     }
 }
@@ -123,11 +130,11 @@ impl Expected {
 impl fmt::Display for Expected {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Expected::Text(s) => write!(f, "{}",s),
+            Expected::Text(s) => write!(f, "{}", s),
             Expected::Spot(span) => match span.source_text() {
-                Some(s) => write!(f, "{}",s),
-                None => write!(f, "<missing source : {:?}>",span),
-            }
+                Some(s) => write!(f, "{}", s),
+                None => write!(f, "<missing source : {:?}>", span),
+            },
             Expected::Start(del) => write!(f, "{}", get_start_del(*del)),
             Expected::End(del) => write!(f, "{}", get_end_del(*del)),
         }
@@ -142,7 +149,11 @@ pub struct Mismatch {
 
 impl fmt::Display for Mismatch {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "Expected \"{}\" but found \"{}\"", self.expected, self.actual)
+        write!(
+            f,
+            "Expected \"{}\" but found \"{}\"",
+            self.expected, self.actual
+        )
     }
 }
 
@@ -157,25 +168,23 @@ impl From<Mismatch> for syn::Error {
 }
 
 #[derive(Clone, Debug)]
-pub enum ParseError{
+pub enum ParseError {
     Empty,
     Simple(Mismatch),
-    Message(Span,&'static str),
-    Syn(syn::Error)
+    Message(Span, &'static str),
+    Syn(syn::Error),
 }
 
-impl Display for ParseError{
-
-fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), std::fmt::Error> {
-    use ParseError::*;
-    match self{
-        Empty =>  write!(f,"<no debug info for this error>"),
-        Simple(x) => x.fmt(f), 
-        ParseError::Message(_, message) => message.fmt(f),
-        ParseError::Syn(x) => x.fmt(f),
-
+impl Display for ParseError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), std::fmt::Error> {
+        use ParseError::*;
+        match self {
+            Empty => write!(f, "<no debug info for this error>"),
+            Simple(x) => x.fmt(f),
+            ParseError::Message(_, message) => message.fmt(f),
+            ParseError::Syn(x) => x.fmt(f),
+        }
     }
-}
 }
 
 impl std::error::Error for ParseError {}
@@ -183,7 +192,9 @@ impl std::error::Error for ParseError {}
 impl From<ParseError> for syn::Error {
     fn from(err: ParseError) -> Self {
         match err {
-            ParseError::Empty => syn::Error::new(Span::call_site(), "<no debug info for this error>"),
+            ParseError::Empty => {
+                syn::Error::new(Span::call_site(), "<no debug info for this error>")
+            }
             ParseError::Simple(mismatch) => mismatch.into(), // Uses Mismatch's Into<syn::Error>
             ParseError::Message(span, message) => syn::Error::new(span, message),
             ParseError::Syn(error) => error, // Already a syn::Error
@@ -191,14 +202,16 @@ impl From<ParseError> for syn::Error {
     }
 }
 
-impl From<Mismatch> for ParseError{
-
-fn from(m: Mismatch) -> Self { ParseError::Simple(m) }
+impl From<Mismatch> for ParseError {
+    fn from(m: Mismatch) -> Self {
+        ParseError::Simple(m)
+    }
 }
 
-impl From<syn::Error> for ParseError{
-
-fn from(e: syn::Error) -> Self { ParseError::Syn(e) }
+impl From<syn::Error> for ParseError {
+    fn from(e: syn::Error) -> Self {
+        ParseError::Syn(e)
+    }
 }
 
 /// A wrapper around `syn::Cursor` that tracks the last delimiter.
@@ -208,17 +221,22 @@ pub struct Input<'a> {
     block_end: Option<DelMark>,
 }
 
-impl PartialEq for Input<'_>{
-fn eq(&self, other: &Self) -> bool { self.cursor==other.cursor }
+impl PartialEq for Input<'_> {
+    fn eq(&self, other: &Self) -> bool {
+        self.cursor == other.cursor
+    }
 }
 
-impl PartialOrd for Input<'_>{
-fn partial_cmp(&self, other: &Self) ->  Option<Ordering> { self.cursor.partial_cmp(&other.cursor) }
+impl PartialOrd for Input<'_> {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        self.cursor.partial_cmp(&other.cursor)
+    }
 }
 
-impl<'a> From<Input<'a>> for Cursor<'a>{
-
-fn from(x: Input<'a>) -> Self { x.cursor }
+impl<'a> From<Input<'a>> for Cursor<'a> {
+    fn from(x: Input<'a>) -> Self {
+        x.cursor
+    }
 }
 
 impl<'a> Input<'a> {
@@ -246,25 +264,49 @@ impl<'a> Input<'a> {
     /// If the `Input` points at an identifier, returns it and an `Input` at the next token.
     pub fn ident(self) -> Option<(Ident, Self)> {
         let (ident, next_cursor) = self.cursor.ident()?;
-        Some((ident, Self { cursor: next_cursor, block_end: self.block_end }))
+        Some((
+            ident,
+            Self {
+                cursor: next_cursor,
+                block_end: self.block_end,
+            },
+        ))
     }
 
     /// If the `Input` points at a punctuation token, returns it and an `Input` at the next token.
     pub fn punct(self) -> Option<(Punct, Self)> {
         let (punct, next_cursor) = self.cursor.punct()?;
-        Some((punct, Self { cursor: next_cursor, block_end: self.block_end }))
+        Some((
+            punct,
+            Self {
+                cursor: next_cursor,
+                block_end: self.block_end,
+            },
+        ))
     }
 
     /// If the `Input` points at a literal, returns it and an `Input` at the next token.
     pub fn literal(self) -> Option<(Literal, Self)> {
         let (literal, next_cursor) = self.cursor.literal()?;
-        Some((literal, Self { cursor: next_cursor, block_end: self.block_end }))
+        Some((
+            literal,
+            Self {
+                cursor: next_cursor,
+                block_end: self.block_end,
+            },
+        ))
     }
 
     /// If the `Input` points at a lifetime, returns it and an `Input` at the next token.
     pub fn lifetime(self) -> Option<(syn::Lifetime, Self)> {
         let (lifetime, next_cursor) = self.cursor.lifetime()?;
-        Some((lifetime, Self { cursor: next_cursor, block_end: self.block_end }))
+        Some((
+            lifetime,
+            Self {
+                cursor: next_cursor,
+                block_end: self.block_end,
+            },
+        ))
     }
 
     /// If the `Input` points at a group with the given delimiter, returns:
@@ -274,9 +316,18 @@ impl<'a> Input<'a> {
     pub fn group(self, delim: Delimiter) -> Option<(Self, DelimSpan, Self)> {
         let (inner_cursor, delim_span, next_cursor) = self.cursor.group(delim)?;
         Some((
-            Self { cursor: inner_cursor, block_end: Some(DelMark { del: delim, span: delim_span.close() }) },
+            Self {
+                cursor: inner_cursor,
+                block_end: Some(DelMark {
+                    del: delim,
+                    span: delim_span.close(),
+                }),
+            },
             delim_span,
-            Self { cursor: next_cursor, block_end: self.block_end },
+            Self {
+                cursor: next_cursor,
+                block_end: self.block_end,
+            },
         ))
     }
 
@@ -288,10 +339,19 @@ impl<'a> Input<'a> {
     pub fn any_group(self) -> Option<(Self, Delimiter, DelimSpan, Self)> {
         let (inner_cursor, delim, delim_span, next_cursor) = self.cursor.any_group()?;
         Some((
-            Self { cursor: inner_cursor, block_end: Some(DelMark { del: delim, span: delim_span.close() }) },
+            Self {
+                cursor: inner_cursor,
+                block_end: Some(DelMark {
+                    del: delim,
+                    span: delim_span.close(),
+                }),
+            },
             delim,
             delim_span,
-            Self { cursor: next_cursor, block_end: self.block_end },
+            Self {
+                cursor: next_cursor,
+                block_end: self.block_end,
+            },
         ))
     }
 
@@ -306,10 +366,19 @@ impl<'a> Input<'a> {
     pub fn token_tree(self) -> Option<(TokenTree, Self)> {
         let (tree, next_cursor) = self.cursor.token_tree()?;
         let new_block_end = match &tree {
-            TokenTree::Group(group) => Some(DelMark { del: group.delimiter(), span: group.span_close() }),
+            TokenTree::Group(group) => Some(DelMark {
+                del: group.delimiter(),
+                span: group.span_close(),
+            }),
             _ => self.block_end,
         };
-        Some((tree, Self { cursor: next_cursor, block_end: new_block_end }))
+        Some((
+            tree,
+            Self {
+                cursor: next_cursor,
+                block_end: new_block_end,
+            },
+        ))
     }
 
     /// Returns the `Span` of the current token, or `Span::call_site()` if the `Input` is at EOF.
@@ -331,9 +400,9 @@ impl<'a> Input<'a> {
     }
 
     pub fn end_span(self) -> Span {
-        match self.cursor.any_group(){
-            None=> self.cursor.span(),
-            Some((_, _, delim_span, _))=> delim_span.close(),
+        match self.cursor.any_group() {
+            None => self.cursor.span(),
+            Some((_, _, delim_span, _)) => delim_span.close(),
         }
     }
 }

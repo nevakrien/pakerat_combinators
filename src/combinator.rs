@@ -1,19 +1,17 @@
-
-use std::ops::Deref;
 use crate::cache::DynCache;
-use syn::Lifetime;
-use proc_macro2::Span;
+use crate::core::Input;
+use crate::core::ParseError;
+use proc_macro2::Delimiter;
+use proc_macro2::Group;
+use proc_macro2::Ident;
 use proc_macro2::Literal;
 use proc_macro2::Punct;
+use proc_macro2::Span;
 use proc_macro2::TokenTree;
-use proc_macro2::Group;
-use proc_macro2::Delimiter;
-use proc_macro2::Ident;
-use std::marker::PhantomData;
-use crate::core::ParseError;
 use std::error::Error;
-use crate::core::Input;
-
+use std::marker::PhantomData;
+use std::ops::Deref;
+use syn::Lifetime;
 
 ///error type for handeling recursive parses.
 ///
@@ -24,20 +22,23 @@ use crate::core::Input;
 ///miss reporting an error as regular can lead to weird caching behivior and wrong/unpredictble behivior.
 ///
 ///as well as program panics on bad parses (this was chosen over errors to avoid corupted states).
-#[derive(Debug,Clone)]
-pub enum PakeratError<E=ParseError> where E: Clone+Error,{
+#[derive(Debug, Clone)]
+pub enum PakeratError<E = ParseError>
+where
+    E: Clone + Error,
+{
     ///these are the errors most user code should generate
     ///
     ///dont construct these from a recursive error
     Regular(E),
 
-    ///when you encounter this avoid calling ANY other parsers on the state. 
+    ///when you encounter this avoid calling ANY other parsers on the state.
     ///
     ///and return a recursive error back
-    Recursive(E)
+    Recursive(E),
 }
 
-impl<E: Error + std::clone::Clone> PakeratError<E>{
+impl<E: Error + std::clone::Clone> PakeratError<E> {
     pub fn inner(self) -> E {
         match self {
             PakeratError::Regular(e) => e,
@@ -45,41 +46,39 @@ impl<E: Error + std::clone::Clone> PakeratError<E>{
         }
     }
 
-    pub fn map<F:FnOnce(E) -> T,T:Error+Clone>(self,f:F) -> PakeratError<T>{
+    pub fn map<F: FnOnce(E) -> T, T: Error + Clone>(self, f: F) -> PakeratError<T> {
         match self {
             PakeratError::Regular(e) => PakeratError::Regular(f(e)),
             PakeratError::Recursive(e) => PakeratError::Recursive(f(e)),
         }
     }
-
 }
 
-impl From<PakeratError<syn::Error>> for PakeratError<ParseError>{
-
-fn from(e: PakeratError<syn::Error>) -> Self { e.map(|x| x.into())}
+impl From<PakeratError<syn::Error>> for PakeratError<ParseError> {
+    fn from(e: PakeratError<syn::Error>) -> Self {
+        e.map(|x| x.into())
+    }
 }
 
 impl From<PakeratError> for syn::Error {
-
-fn from(e: PakeratError) -> Self { e.inner().into() }
+    fn from(e: PakeratError) -> Self {
+        e.inner().into()
+    }
 }
 
 ///result type used for internal cache managment
-pub type Pakerat<T,E = ParseError> = Result<T,PakeratError<E>>;
-
+pub type Pakerat<T, E = ParseError> = Result<T, PakeratError<E>>;
 
 // Implement Clone when `E: Clone`
 impl<E: PartialEq + Error + Clone> PartialEq for PakeratError<E> {
-
-fn eq(&self, other: &PakeratError<E>) -> bool {
-    match(self,other){
-        (PakeratError::Regular(a),PakeratError::Regular(b)) => a==b,
-        (PakeratError::Recursive(a),PakeratError::Recursive(b)) => a==b,
-        _=> false,
+    fn eq(&self, other: &PakeratError<E>) -> bool {
+        match (self, other) {
+            (PakeratError::Regular(a), PakeratError::Regular(b)) => a == b,
+            (PakeratError::Recursive(a), PakeratError::Recursive(b)) => a == b,
+            _ => false,
+        }
     }
 }
-}
-
 
 /// A trait that defines the output type of a combinator.
 ///
@@ -108,11 +107,26 @@ macro_rules! impl_borrow_parse {
     };
 }
 
-
-
 // Implement `BorrowParse` for common types
-impl_borrow_parse!((),u8, u16, u32, u64, u128, i8, i16, i32, i64, i128, f32, f64, char, bool, String);
-impl_borrow_parse!(Ident,Punct,Literal,TokenTree,Group,Delimiter,Span,Lifetime);
+impl_borrow_parse!(
+    (),
+    u8,
+    u16,
+    u32,
+    u64,
+    u128,
+    i8,
+    i16,
+    i32,
+    i64,
+    i128,
+    f32,
+    f64,
+    char,
+    bool,
+    String
+);
+impl_borrow_parse!(Ident, Punct, Literal, TokenTree, Group, Delimiter, Span, Lifetime);
 
 // Macro to implement BorrowParse for generic containers
 macro_rules! impl_borrow_parse_for_container {
@@ -121,7 +135,7 @@ macro_rules! impl_borrow_parse_for_container {
             type Output<'a> = $container<T::Output<'a>>;
         }
     };
-    
+
 }
 impl_borrow_parse_for_container!(Vec<T>);
 impl_borrow_parse_for_container!(Option<T>);
@@ -135,15 +149,14 @@ macro_rules! impl_borrow_parse_for_array_container {
             type Output<'a> = $container<T::Output<'a>>;
         }
     };
-    
+
 }
 impl_borrow_parse_for_array_container!(Box<[T]>);
 impl_borrow_parse_for_array_container!(Rc<[T]>);
 impl_borrow_parse_for_array_container!(Arc<[T]>);
 
-impl<V:BorrowParse,E:BorrowParse> BorrowParse for Result<V,E>{
-
-type Output<'a> = Result<V::Output<'a>,E::Output<'a>>;
+impl<V: BorrowParse, E: BorrowParse> BorrowParse for Result<V, E> {
+    type Output<'a> = Result<V::Output<'a>, E::Output<'a>>;
 }
 
 macro_rules! impl_borrow_parse_for_tuples {
@@ -159,15 +172,13 @@ impl_borrow_parse_for_tuples!(T1, T2);
 impl_borrow_parse_for_tuples!(T1, T2, T3);
 impl_borrow_parse_for_tuples!(T1, T2, T3, T4);
 impl_borrow_parse_for_tuples!(T1, T2, T3, T4, T5);
-impl_borrow_parse_for_tuples!(T1, T2, T3, T4, T5,T6);
-impl_borrow_parse_for_tuples!(T1, T2, T3, T4, T5,T6,T7);
-impl_borrow_parse_for_tuples!(T1, T2, T3, T4, T5,T6,T7,T8);
+impl_borrow_parse_for_tuples!(T1, T2, T3, T4, T5, T6);
+impl_borrow_parse_for_tuples!(T1, T2, T3, T4, T5, T6, T7);
+impl_borrow_parse_for_tuples!(T1, T2, T3, T4, T5, T6, T7, T8);
 //if you somehow for some reason need more than 8 something is defintly goe very very wrong
 
-
-
 /// A `Combinator` is a fundamental parser used throughout this crate.
-/// 
+///
 /// These combinators are designed to behave similarly to closures; in fact, closures are also valid combinators.  
 /// Combinators are usually combined together to form larger parsers.  
 /// You will find more references to this [`multi`], along with code examples.
@@ -176,26 +187,31 @@ impl_borrow_parse_for_tuples!(T1, T2, T3, T4, T5,T6,T7,T8);
 ///
 /// [`map`]: crate::combinator::CombinatorExt::map
 /// [`multi`]: crate::multi
-pub trait Combinator<T : BorrowParse = (), O : BorrowParse = T> {
-
+pub trait Combinator<T: BorrowParse = (), O: BorrowParse = T> {
     /// Parses the given input, utilizing the provided cache.
     ///
     /// Returns a [`Pakerat`] result containing the remaining input and the parsed output.
-    fn parse<'a>(&self, input: Input<'a>, state: &mut dyn DynCache<'a,O>) -> Pakerat<(Input<'a>, T::Output<'a>)>;
+    fn parse<'a>(
+        &self,
+        input: Input<'a>,
+        state: &mut dyn DynCache<'a, O>,
+    ) -> Pakerat<(Input<'a>, T::Output<'a>)>;
 
     /// Parses the input while discarding the output.
     ///
     /// This method exists to avoid allocating memory for parses that are ignored.
     /// For the most parts users are not expected to implement this directly.
-    fn parse_ignore<'a>(&self, input: Input<'a>, state: &mut dyn DynCache<'a,O>) -> Pakerat<Input<'a>> {
+    fn parse_ignore<'a>(
+        &self,
+        input: Input<'a>,
+        state: &mut dyn DynCache<'a, O>,
+    ) -> Pakerat<Input<'a>> {
         let (ans, _) = self.parse(input, state)?;
         Ok(ans)
     }
 }
 
-
-
-/// We would ideally not need this, but Rust requires explicit implementations 
+/// We would ideally not need this, but Rust requires explicit implementations
 // for trait objects due to its object safety rules.
 macro_rules! impl_combinator_for_wrappers {
     ($wrapper:ty) => {
@@ -231,7 +247,7 @@ impl_combinator_for_wrappers!(Box<dyn Combinator<T, O>>);
 impl_combinator_for_wrappers!(Rc<dyn Combinator<T, O>>);
 impl_combinator_for_wrappers!(Arc<dyn Combinator<T, O>>);
 
-// We would ideally not need this, but Rust requires explicit implementations 
+// We would ideally not need this, but Rust requires explicit implementations
 // for trait objects due to its object safety rules.
 macro_rules! impl_combinator_for_wrapper_p {
     ($wrapper:ty) => {
@@ -260,17 +276,12 @@ macro_rules! impl_combinator_for_wrapper_p {
     };
 }
 
-
 // Implement for Rc<P> and Arc<P>
 impl_combinator_for_wrapper_p!(Rc<P>);
 // Uncomment if needed
 // impl_combinator_for_wrapper_p!(Box<P>);
 
 impl_combinator_for_wrapper_p!(Arc<P>);
-
-
-
-
 
 /// Implementing for function-like types
 impl<F, T, O> Combinator<T, O> for F
@@ -279,7 +290,11 @@ where
     O: BorrowParse,
     T: BorrowParse,
 {
-    fn parse<'a>(&self, input: Input<'a>, state: &mut dyn DynCache<'a, O>) -> Pakerat<(Input<'a>, T::Output<'a>)> {
+    fn parse<'a>(
+        &self,
+        input: Input<'a>,
+        state: &mut dyn DynCache<'a, O>,
+    ) -> Pakerat<(Input<'a>, T::Output<'a>)> {
         (self)(input, state)
     }
 }
@@ -289,32 +304,26 @@ fn test_closures() {
     use crate::multi::Maybe;
     use std::marker::PhantomData;
 
-
     fn example_parser<'a>(input: Input<'a>, _state: &mut dyn DynCache) -> Pakerat<(Input<'a>, ())> {
         Ok((input, ()))
     }
 
     #[allow(dead_code)]
-    fn dumb(_maybe: Maybe::<&'static dyn Combinator>){
-
-    }
+    fn dumb(_maybe: Maybe<&'static dyn Combinator>) {}
 
     let dumby2: Box<dyn Combinator> = Box::new(example_parser);
     let _maybe = Maybe::new(&*dumby2);
-    let _maybe = Maybe{
-        inner:dumby2,
-        _phantom:PhantomData
+    let _maybe = Maybe {
+        inner: dumby2,
+        _phantom: PhantomData,
     };
 }
 
-
-
-
 #[test]
 fn test_dyn_closure_combinator_error_mapping() {
-    use syn::buffer::TokenBuffer;
-    use std::rc::Rc;
     use crate::cache::FlexibleCache;
+    use std::rc::Rc;
+    use syn::buffer::TokenBuffer;
 
     // A simple parser that always fails with a Regular error
     fn failing_parser<'a>(
@@ -332,19 +341,17 @@ fn test_dyn_closure_combinator_error_mapping() {
     let buffer = TokenBuffer::new2(tokens);
 
     // Explicitly define the closure with a for<'a> annotation
-    let closure: &dyn for<'a> Fn(
-        Input<'a>,
-        &mut dyn DynCache<'a, ()>,
-    ) -> Pakerat<(Input<'a>, ())> = &|input, cache| {
-        failing_parser(input, cache).map_err(|e| {
-            e.map(|e| {
-                let err: syn::Error = e.into(); // Explicitly create the `err` variable
-                let mut new_err = syn::Error::new(err.span(), "failed doing something");
-                new_err.combine(err); // Capture the original error
-                ParseError::Syn(new_err) // Return the transformed error
+    let closure: &dyn for<'a> Fn(Input<'a>, &mut dyn DynCache<'a, ()>) -> Pakerat<(Input<'a>, ())> =
+        &|input, cache| {
+            failing_parser(input, cache).map_err(|e| {
+                e.map(|e| {
+                    let err: syn::Error = e.into(); // Explicitly create the `err` variable
+                    let mut new_err = syn::Error::new(err.span(), "failed doing something");
+                    new_err.combine(err); // Capture the original error
+                    ParseError::Syn(new_err) // Return the transformed error
+                })
             })
-        })
-    };
+        };
 
     // Convert the closure into a trait object that implements Combinator
     let error_mapping_combinator: Rc<dyn for<'a> Combinator<(), ()>> = Rc::new(closure);
@@ -363,7 +370,6 @@ fn test_dyn_closure_combinator_error_mapping() {
         }
     }
 }
-
 
 /// Extension trait for [`Combinator`] holding useful syntax sugar
 /// see individual methods for more detail
@@ -394,10 +400,13 @@ pub trait CombinatorExt<T: BorrowParse = (), O: BorrowParse = T>: Combinator<T, 
     /// let _ = pair_parser.parse(Input::empty(), &mut cache);
     /// let _ = maybe_parser.parse(Input::empty(), &mut cache);
     /// ```
-    fn as_ref<'a>(&'a self) -> RefParser<'a,Self,T,O> where Self: Sized{
-        RefParser{
-            inner:self,
-            _phantom:PhantomData
+    fn as_ref(&self) -> RefParser<'_, Self, T, O>
+    where
+        Self: Sized,
+    {
+        RefParser {
+            inner: self,
+            _phantom: PhantomData,
         }
     }
 
@@ -428,13 +437,10 @@ pub trait CombinatorExt<T: BorrowParse = (), O: BorrowParse = T>: Combinator<T, 
     /// let (_, result) = uppercase_parser.parse(input, &mut cache).unwrap();
     /// assert_eq!(result, "EXAMPLE");
     /// ```
-    fn map<F, T2>(
-        self,
-        map_fn: F,
-    ) -> MapCombinator<Self, F, T, T2, O>
+    fn map<F, T2>(self, map_fn: F) -> MapCombinator<Self, F, T, T2, O>
     where
         F: for<'a> Fn(T::Output<'a>) -> T2,
-        T2:for<'a> BorrowParse<Output<'a> = T2>,
+        T2: for<'a> BorrowParse<Output<'a> = T2>,
         Self: Sized,
     {
         MapCombinator {
@@ -468,8 +474,11 @@ pub trait CombinatorExt<T: BorrowParse = (), O: BorrowParse = T>: Combinator<T, 
     ///
     /// assert!(result.is_ok());
     /// ```
-
-    fn parse_into<'a,V, E2>(&self, input: Input<'a>, state: &mut dyn DynCache<'a, O>) -> Result<(Input<'a>, V), E2>
+    fn parse_into<'a, V, E2>(
+        &self,
+        input: Input<'a>,
+        state: &mut dyn DynCache<'a, O>,
+    ) -> Result<(Input<'a>, V), E2>
     where
         V: From<T::Output<'a>>,
         E2: Error + From<PakeratError>,
@@ -481,8 +490,6 @@ pub trait CombinatorExt<T: BorrowParse = (), O: BorrowParse = T>: Combinator<T, 
 
 impl<T: BorrowParse, O: BorrowParse, F: Combinator<T, O>> CombinatorExt<T, O> for F {}
 
-
-
 /// A combinator that transforms the output of another parser using a mapping function.
 /// see [`CombinatorExt::map`] for a full example.
 ///
@@ -490,7 +497,6 @@ impl<T: BorrowParse, O: BorrowParse, F: Combinator<T, O>> CombinatorExt<T, O> fo
 /// if this is a problem implement [`Combinator`] directly for MyStruct(Base)
 pub struct MapCombinator<Base, F, In, Out, Cached>
 where
-    
     Base: Combinator<In, Cached>,
     F: for<'a> Fn(In::Output<'a>) -> Out,
     In: BorrowParse,
@@ -525,22 +531,30 @@ where
 /// This struct is primarily created using [`CombinatorExt::as_ref`], which allows
 /// an existing combinator to be reused in multiple combinator constructions without
 /// ownership issues. See [`CombinatorExt::as_ref`] for a full example.
-#[derive(Clone,Copy)]
-pub struct RefParser<'parser,INNER:Combinator<T, O>,T:BorrowParse,O:BorrowParse>{
-    pub inner:&'parser INNER,
-    pub _phantom:PhantomData<(T,O)>
+#[derive(Clone, Copy)]
+pub struct RefParser<'parser, INNER: Combinator<T, O>, T: BorrowParse, O: BorrowParse> {
+    pub inner: &'parser INNER,
+    pub _phantom: PhantomData<(T, O)>,
 }
 
+impl<T: BorrowParse, O: BorrowParse, INNER: Combinator<T, O>> Combinator<T, O>
+    for RefParser<'_, INNER, T, O>
+{
+    fn parse<'a>(
+        &self,
+        input: Input<'a>,
+        state: &mut dyn DynCache<'a, O>,
+    ) -> Pakerat<(Input<'a>, T::Output<'a>)> {
+        self.inner.parse(input, state)
+    }
 
-impl<T:BorrowParse,O:BorrowParse,INNER:Combinator<T, O>> Combinator<T,O> for RefParser<'_,INNER,T,O>{
-
-fn parse<'a>(&self, input: Input<'a>, state: &mut dyn DynCache<'a,O>) -> Pakerat<(Input<'a>, T::Output<'a>)> {
-    self.inner.parse(input, state)
-}
-
-fn parse_ignore<'a>(&self, input: Input<'a>, state: &mut dyn DynCache<'a,O>) -> Pakerat<Input<'a>> {
-    self.inner.parse_ignore(input, state)
-}
+    fn parse_ignore<'a>(
+        &self,
+        input: Input<'a>,
+        state: &mut dyn DynCache<'a, O>,
+    ) -> Pakerat<Input<'a>> {
+        self.inner.parse_ignore(input, state)
+    }
 }
 
 impl<INNER, T, O> Deref for RefParser<'_, INNER, T, O>
@@ -556,11 +570,13 @@ where
     }
 }
 
-impl<'parser, INNER : Combinator<T,O>, T:BorrowParse, O:BorrowParse> RefParser<'parser, INNER, T, O>{
-    pub fn new(inner:&'parser INNER) -> Self{
-        Self{
+impl<'parser, INNER: Combinator<T, O>, T: BorrowParse, O: BorrowParse>
+    RefParser<'parser, INNER, T, O>
+{
+    pub fn new(inner: &'parser INNER) -> Self {
+        Self {
             inner,
-            _phantom:PhantomData
+            _phantom: PhantomData,
         }
     }
 }

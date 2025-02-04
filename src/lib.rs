@@ -1,14 +1,14 @@
 //for now in testing
 // #![feature(specialization)]
 
+pub mod basic_parsers;
 pub mod cache;
 pub mod combinator;
-pub mod basic_parsers;
-pub mod multi;
 pub mod core;
+pub mod multi;
 pub mod recursive;
 mod macros {
-	#![allow(unused_macros,unused_imports)]
+    #![allow(unused_macros, unused_imports)]
 
     macro_rules! token_cursor {
     ($name:ident, $input:expr) => {
@@ -18,6 +18,6 @@ mod macros {
     };
 }
 
-    pub(crate) use token_cursor;    // <-- the trick
-    // pub use crate::one_of;    // <-- the trick
+    pub(crate) use token_cursor; // <-- the trick
+                                 // pub use crate::one_of;    // <-- the trick
 }
