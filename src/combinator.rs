@@ -1,3 +1,4 @@
+use crate::multi::Filter;
 use crate::cache::DynCache;
 use crate::core::Input;
 use crate::core::ParseError;
@@ -486,6 +487,22 @@ pub trait CombinatorExt<T: BorrowParse = (), O: BorrowParse = T>: Combinator<T, 
         let (input, t) = self.parse(input, state)?;
         Ok((input, t.into()))
     }
+
+    ////// Wraps a parser to filter its output based on a predicate.
+    ///
+    /// After parsing using the inner parser, the given filtering function is applied to the result.
+    /// If the filtering function returns `true`, the output is accepted; otherwise, a parsing error is
+    /// returned with the custom error message provided.
+    ///
+    ///this is just syntax sugar around [`Filter`]
+    fn filter<F>(self, filter_fn: F, err_msg: &'static str) -> Filter<Self, T, O, F>
+        where
+            F: for<'a> Fn(&T::Output<'a>) -> bool,
+            Self: Sized,
+        {
+            Filter::new(self, filter_fn, err_msg)
+        }
+
 }
 
 impl<T: BorrowParse, O: BorrowParse, F: Combinator<T, O>> CombinatorExt<T, O> for F {}

@@ -112,3 +112,71 @@ impl<T: BorrowParse, O: BorrowParse> Combinator<T, O> for RecursiveParser<'_, T,
         self.get().parse_ignore(input, state)
     }
 }
+
+
+#[cfg(test)]
+mod tests {
+    use crate::basic_parsers::DelParser;
+use proc_macro2::Delimiter;
+use crate::combinator::CombinatorExt;
+use crate::combinator::Combinator;
+    use crate::basic_parsers::{IntParser, PunctParser};
+    use crate::core::Input;
+    use crate::cache::{CachedComb, BasicCache};
+    use crate::multi::{Pair, Wrapped};
+    use crate::one_of;
+    use crate::recursive::RecursiveParser;
+    use syn::buffer::TokenBuffer;
+
+    /// Example usage: Parsing arithmetic expressions with +, *, and ()
+    ///
+    /// Parsing rules:
+    /// (num) => num
+    /// add_num * num => num
+    /// add_num => num
+    ///
+    /// int + num => add_num
+    /// int => add_num
+    #[test]
+    fn test_arithmetic_parsing() {
+        let tokens = "3 + 4 * (2 + 5)".parse().unwrap();
+        let buffer = TokenBuffer::new2(tokens);
+        let input = Input::new(&buffer);
+        
+        let mut cache = BasicCache::<2,i64>::new(); // Cache size of 2 for `num` and `add_num`
+        
+        let expr_parser = RecursiveParser::new();
+        let add_num_parser = RecursiveParser::new();
+
+        //add num
+        let add_num_parser_holder = CachedComb::new(
+            one_of!("expected num or num + num",
+                Pair::new(IntParser, Pair::new(PunctParser.filter(|c| c.as_char()=='+',"expected +"), expr_parser.as_ref()))
+                    .map(|(lhs, (_, rhs))| lhs + rhs),
+                IntParser
+            ),
+            1,
+            "infinite loop bug"
+        );
+        add_num_parser.set(&add_num_parser_holder);
+        
+        //expr
+        let expr_parser_holder = CachedComb::new(one_of!("expected int",
+            Wrapped::new(
+                DelParser(Delimiter::Parenthesis)
+                ,expr_parser.as_ref()
+            ),
+            Pair::new(add_num_parser.as_ref(), Pair::new(PunctParser.filter(|c| c.as_char()=='*',"expected *"), expr_parser.as_ref()))
+                .map(|(lhs, (_, rhs))| lhs * rhs),
+            add_num_parser.as_ref()
+        ),
+        0,
+        "infinite loop bug"
+        );
+        
+        expr_parser.set(&expr_parser_holder);
+        
+        let (_, result) = expr_parser.parse(input, &mut cache).unwrap();
+        assert_eq!(result, 3 + 4 * (2 + 5)); // Ensure correct parsing
+    }
+}

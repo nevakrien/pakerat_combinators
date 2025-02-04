@@ -431,7 +431,10 @@ pub type BasicCache<'a, const L: usize, T = ()> = HashMap<usize, ArrayCache<'a, 
 /// this cache can work with any id range.
 pub type FlexibleCache<'a, T = ()> = HashMap<usize, HashCache<'a, T>>;
 
-/// A combinator that caches the results of an inner parser, reducing redundant computations.
+/// A combinator that caches the results of an inner parser.
+///
+/// This allows detecting infinite loops and excuting in linear time. 
+/// see [`Cache`] and [`parse_cached`] for details.
 ///
 /// ## Example Usage
 /// ### Using `CachedComb`

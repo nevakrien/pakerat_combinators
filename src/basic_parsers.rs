@@ -19,6 +19,7 @@ use syn::parse::ParseStream;
 use syn::Lifetime;
 use syn::LitInt;
 
+///detects an exact match between an input stream and the stream from start to end (not including end)
 pub fn streams_match<'a>(
     mut start: Input<'_>,
     end: Input<'_>,
@@ -127,6 +128,8 @@ pub fn streams_match<'a>(
 // 	}
 // 	Ok(input)
 // }
+
+///detects an exact match between an input stream and the stream from start to end (not including end)
 #[derive(Clone, Copy)]
 pub struct MatchParser<'b> {
     pub start: Input<'b>,
@@ -147,6 +150,11 @@ impl<O: BorrowParse> Combinator<(), O> for MatchParser<'_> {
 
 macro_rules! define_parser {
     ($name:ident, $output:ty, $method:ident, $expected:expr) => {
+        #[doc = concat!("thin wrapper around [`Input::", stringify!($method), "()`]")]
+        #[doc = "that extracts a [`"]
+        #[doc = stringify!($output)]
+        #[doc = "`] token from the input stream."]
+        #[doc = "If the expected token is not found, it produces a [`ParseError`]."]
         #[derive(Debug, Clone, Copy, PartialEq)]
         pub struct $name;
 
@@ -171,6 +179,7 @@ macro_rules! define_parser {
 }
 
 // Define the parsers using the updated macro
+
 define_parser!(AnyParser, TokenTree, token_tree, "any token");
 define_parser!(PunctParser, Punct, punct, "one of +-=?;.*&^%$#@!...");
 define_parser!(IdentParser, Ident, ident, "a name");
@@ -182,6 +191,7 @@ define_parser!(
 );
 define_parser!(LifetimeParser, Lifetime, lifetime, "a lifetime");
 
+///parses an i64 using [`syn`]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct IntParser;
 
@@ -213,6 +223,10 @@ impl<O: BorrowParse> Combinator<i64, O> for IntParser {
     }
 }
 
+/// parses a group delimited by a specific [`Delimiter`] returining an Input to the inside of the group
+///
+/// this methods api is a result of how [`proc_macro2::TokenTree`] works. 
+/// We are unable to parse individual delimiters
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[repr(transparent)]
 pub struct DelParser(pub Delimiter);
@@ -234,6 +248,10 @@ impl<O: BorrowParse> Combinator<Input<'_>, O> for DelParser {
     }
 }
 
+/// parses any group delimited by [`Delimiter`] returining an Input to the inside of the group
+///
+/// this methods api is a result of how [`proc_macro2::TokenTree`] works. 
+/// We are unable to parse individual delimiters
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct AnyDelParser;
 

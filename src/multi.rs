@@ -1013,6 +1013,123 @@ where
     }
 }
 
+
+/// Wraps a parser to filter its output based on a predicate.
+///
+/// After parsing using the inner parser, the given filtering function is applied to the result.
+/// If the filtering function returns `true`, the output is accepted; otherwise, a parsing error is
+/// returned with the custom error message provided.
+///
+/// # Example
+/// ```rust
+/// use pakerat_combinators::multi::Filter;
+/// use pakerat_combinators::basic_parsers::IdentParser;
+/// use pakerat_combinators::combinator::Combinator;
+/// use pakerat_combinators::cache::BasicCache;
+/// use pakerat_combinators::core::Input;
+/// use syn::buffer::TokenBuffer;
+///
+/// let tokens = "my_var".parse().unwrap();
+/// let buffer = TokenBuffer::new2(tokens);
+/// let input = Input::new(&buffer);
+///
+/// // Create a parser that accepts identifiers that are not equal to "forbidden"
+/// let parser = Filter::new(
+///     IdentParser,
+///     |ident| {
+///         ident != "forbidden"
+///     },
+///     "identifier cannot be 'forbidden'"
+/// );
+///
+/// let mut cache = BasicCache::<0>::new();
+/// let (_next_input, result) = parser.parse(input, &mut cache).unwrap();
+/// assert_eq!(result, "my_var".to_string());
+/// ```
+pub struct Filter<P, T , O , F>
+where
+    P: Combinator<T, O>,
+    T: BorrowParse,
+    O: BorrowParse,
+    // The filter function accepts a reference to the parsed output and returns a bool.
+    // We require it to work for any lifetime.
+    F: for<'a> Fn(&T::Output<'a>) -> bool,
+{
+    /// The inner parser whose output will be filtered.
+    pub parser: P,
+    /// The filtering function that determines if the parsed output is acceptable.
+    pub filter: F,
+    /// The custom error message returned if the filter function fails.
+    pub err_msg: &'static str,
+    /// Used so we can have generics.
+    pub _phantom: std::marker::PhantomData<(T, O)>,
+}
+
+impl<P, T, O, F> Combinator<T, O> for Filter<P, T, O, F>
+where
+    P: Combinator<T, O>,
+    T: BorrowParse,
+    O: BorrowParse,
+    F: for<'a> Fn(&T::Output<'a>) -> bool,
+{
+    fn parse<'a>(
+        &self,
+        input: Input<'a>,
+        cache: &mut dyn DynCache<'a, O>,
+    ) -> Pakerat<(Input<'a>, T::Output<'a>)> {
+        match self.parser.parse(input, cache) {
+            Ok((next_input, result)) => {
+                if (self.filter)(&result) {
+                    Ok((next_input, result))
+                } else {
+                    Err(PakeratError::Regular(
+                        ParseError::Message(input.span(), self.err_msg),
+                    ))
+                }
+            }
+            Err(e) => Err(e),
+        }
+    }
+
+    fn parse_ignore<'a>(
+        &self,
+        input: Input<'a>,
+        cache: &mut dyn DynCache<'a, O>,
+    ) -> Pakerat<Input<'a>> {
+        match self.parser.parse(input, cache) {
+            Ok((next_input, result)) => {
+                if (self.filter)(&result) {
+                    Ok(next_input)
+                } else {
+                    Err(PakeratError::Regular(
+                        ParseError::Message(input.span(), self.err_msg),
+                    ))
+                }
+            }
+            Err(e) => Err(e),
+        }
+    }
+}
+
+impl<P, T, O, F> Filter<P, T, O, F>
+where
+    P: Combinator<T, O>,
+    T: BorrowParse,
+    O: BorrowParse,
+    F: for<'a> Fn(&T::Output<'a>) -> bool,
+{
+    /// Creates a new Filter combinator with the given inner parser, filtering function, and error message.
+    pub fn new(parser: P, filter: F, err_msg: &'static str) -> Self {
+        Filter {
+            parser,
+            filter,
+            err_msg,
+            _phantom: std::marker::PhantomData,
+        }
+    }
+}
+
+
 #[cfg(test)]
 mod tests {
     use crate::cache::FlexibleCache;
