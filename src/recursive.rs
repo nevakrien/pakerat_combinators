@@ -151,8 +151,10 @@ use crate::combinator::Combinator;
         //add num
         let add_num_parser_holder = CachedComb::new(
             one_of!("expected num or num + num",
+                //int + num => add_num
                 Pair::new(IntParser, Pair::new(SpecificPunct('+'), expr_parser.as_ref()))
                     .map(|(lhs, (_, rhs))| lhs + rhs),
+                //int => add_num
                 IntParser
             ),
             1,
@@ -162,12 +164,16 @@ use crate::combinator::Combinator;
         
         //expr
         let expr_parser_holder = CachedComb::new(one_of!("expected int",
+            //(num) => num
             Wrapped::new(
                 DelParser(Delimiter::Parenthesis)
                 ,expr_parser.as_ref()
             ),
+            //add_num * num => num
             Pair::new(add_num_parser.as_ref(), Pair::new(SpecificPunct('*'), expr_parser.as_ref()))
                 .map(|(lhs, (_, rhs))| lhs * rhs),
+            
+            //add_num => num 
             add_num_parser.as_ref()
         ),
         0,
