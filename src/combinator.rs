@@ -358,8 +358,41 @@ fn test_dyn_closure_combinator_error_mapping() {
 }
 
 
-
+/// Extension trait for [`Combinator`] holding useful syntax sugar
 pub trait CombinatorExt<T: BorrowParse, O: BorrowParse>: Combinator<T, O> {
+    /// Creates a reference-based wrapper (`RefParser`) for the combinator.
+    ///
+    /// This allows a single combinator instance to be passed to multiple combinators
+    /// that require references, avoiding ownership and borrowing issues.
+    ///
+    /// # Example
+    /// ```rust
+    /// use pakerat_combinators::combinator::{Combinator, CombinatorExt};
+    /// use pakerat_combinators::multi::{Pair, Maybe};
+    /// use pakerat_combinators::core::Input;
+    /// use pakerat_combinators::cache::BasicCache;
+    /// use pakerat_combinators::basic_parsers::IdentParser;
+    ///
+    /// let ident_parser = IdentParser; // A basic combinator.
+    ///
+    ///
+    /// // Use the reference-based parser in different combinators.
+    /// let pair_parser = Pair::new(ident_parser.as_ref(), ident_parser.as_ref());
+    /// let maybe_parser = Maybe::new(ident_parser.as_ref());
+    ///
+    /// let mut cache = BasicCache::<0>::new();
+    ///
+    /// // Parse input using both combinators
+    /// let _ = pair_parser.parse(Input::empty(), &mut cache);
+    /// let _ = maybe_parser.parse(Input::empty(), &mut cache);
+    /// ```
+    fn as_ref<'a>(&'a self) -> RefParser<'a,Self,T,O> where Self: Sized{
+        RefParser{
+            inner:self,
+            _phantom:PhantomData
+        }
+    }
+
     ///calls make(self) this is nice for piping
     fn compose<Transform, Output>(self, make: Transform) -> Output
     where
@@ -435,4 +468,26 @@ where
         let (input, output) = self.inner.parse(input, state)?;
         Ok((input, (self.map_fn)(output)))
     }
+}
+
+/// A reference-based wrapper around an existing `Combinator`.
+///
+/// This struct is primarily created using [`CombinatorExt::as_ref`], which allows
+/// an existing combinator to be reused in multiple combinator constructions without
+/// ownership issues. See [`CombinatorExt::as_ref`] for a full example.
+#[derive(Clone,Copy)]
+pub struct RefParser<'parser,INNER:Combinator<T, O>,T:BorrowParse,O:BorrowParse>{
+    pub inner:&'parser INNER,
+    pub _phantom:PhantomData<(T,O)>
+}
+
+impl<T:BorrowParse,O:BorrowParse,INNER:Combinator<T, O>> Combinator<T,O> for RefParser<'_,INNER,T,O>{
+
+fn parse<'a>(&self, input: Input<'a>, state: &mut dyn DynCache<'a,O>) -> Pakerat<(Input<'a>, T::Output<'a>)> {
+    self.inner.parse(input, state)
+}
+
+fn parse_ignore<'a>(&self, input: Input<'a>, state: &mut dyn DynCache<'a,O>) -> Pakerat<Input<'a>> {
+    self.inner.parse_ignore(input, state)
+}
 }

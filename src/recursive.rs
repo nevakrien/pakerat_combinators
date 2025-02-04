@@ -21,7 +21,7 @@ use crate::combinator::Combinator;
 /// use pakerat_combinators::one_of;
 /// use pakerat_combinators::recursive::RecursiveParser;
 /// use pakerat_combinators::multi::{Pair,Ignore,Wrapped};
-/// use std::rc::Rc;
+/// use crate::pakerat_combinators::combinator::CombinatorExt;
 ///
 /// // Example input
 /// let tokens = "a + (b + c)".parse().unwrap();
@@ -31,16 +31,16 @@ use crate::combinator::Combinator;
 /// // Define the recursive parser
 /// let parser = RecursiveParser::new();
 ///
-/// let terminal_parser = Rc::new(one_of!("expected it or ident",
+/// let terminal_parser = one_of!("expected it or ident",
 ///     Ignore::new(IdentParser),
 ///     Ignore::new(IntParser),
-///  ));
+///  );
 ///
 /// // Define an actual expression parser using the recursive reference.
 /// let expr_parser = one_of!("expected an expression",
-///     Ignore::new(Wrapped::new(AnyDelParser,&parser)),
-///     Ignore::new(Pair::new(terminal_parser.clone(),Pair::new(PunctParser, &parser))),
-///     terminal_parser
+///     Ignore::new(Wrapped::new(AnyDelParser,parser.as_ref())),
+///     Ignore::new(Pair::new(terminal_parser.as_ref(),Pair::new(PunctParser, parser.as_ref()))),
+///     terminal_parser.as_ref()
 /// );
 ///
 /// // Initialize the recursive parser
@@ -87,15 +87,13 @@ impl<'parser , T:BorrowParse, O:BorrowParse> RecursiveParser<'parser , T, O> {
     }
 }
 
-impl<'parser, T:BorrowParse, O:BorrowParse> Combinator< T, O> for &RecursiveParser<'parser, T, O> {
-    fn parse<'a>(&self, input: Input<'a>, state: &mut dyn DynCache<'a,O>) -> Pakerat<(Input<'a>, T::Output<'a>)> {
-        self.get().parse(input, state)
-    }
-}
 
 impl<'parser, T:BorrowParse, O:BorrowParse> Combinator< T, O> for RecursiveParser<'parser, T, O> {
     fn parse<'a>(&self, input: Input<'a>, state: &mut dyn DynCache<'a,O>) -> Pakerat<(Input<'a>, T::Output<'a>)> {
         self.get().parse(input, state)
     }
-}
 
+    fn parse_ignore<'a>(&self, input: Input<'a>, state: &mut dyn DynCache<'a,O>) -> Pakerat<Input<'a>> {
+        self.get().parse_ignore(input, state)
+    }
+}
