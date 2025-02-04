@@ -1017,8 +1017,8 @@ where
 /// Wraps a parser to filter its output based on a predicate.
 ///
 /// After parsing using the inner parser, the given filtering function is applied to the result.
-/// If the filtering function returns `true`, the output is accepted; otherwise, a parsing error is
-/// returned with the custom error message provided.
+/// If the filtering function returns `true`, the output is accepted; otherwise, a missmatch error is returned.
+/// "Found x Expected {}" with a user define expected text.
 ///
 /// # Example
 /// ```rust
@@ -1046,7 +1046,7 @@ where
 /// let (_next_input, result) = parser.parse(input, &mut cache).unwrap();
 /// assert_eq!(result, "my_var".to_string());
 /// ```
-pub struct Filter<P, T , O , F>
+pub struct Filter<P, T, O, F>
 where
     P: Combinator<T, O>,
     T: BorrowParse,
@@ -1059,8 +1059,8 @@ where
     pub parser: P,
     /// The filtering function that determines if the parsed output is acceptable.
     pub filter: F,
-    /// The custom error message returned if the filter function fails.
-    pub err_msg: &'static str,
+    /// the text that would be shown in the error as "Found X expected {}"
+    pub expected: &'static str,
     /// Used so we can have generics.
     pub _phantom: std::marker::PhantomData<(T, O)>,
 }
@@ -1083,7 +1083,10 @@ where
                     Ok((next_input, result))
                 } else {
                     Err(PakeratError::Regular(
-                        ParseError::Message(input.span(), self.err_msg),
+                        ParseError::Simple(Mismatch {
+                            actual: Found::start_of(input),
+                            expected: Expected::Text(self.expected),
+                        })
                     ))
                 }
             }
@@ -1102,7 +1105,10 @@ where
                     Ok(next_input)
                 } else {
                     Err(PakeratError::Regular(
-                        ParseError::Message(input.span(), self.err_msg),
+                        ParseError::Simple(Mismatch {
+                            actual: Found::start_of(input),
+                            expected: Expected::Text(self.expected),
+                        })
                     ))
                 }
             }
@@ -1110,6 +1116,7 @@ where
         }
     }
 }
+
 
 impl<P, T, O, F> Filter<P, T, O, F>
 where
@@ -1119,11 +1126,11 @@ where
     F: for<'a> Fn(&T::Output<'a>) -> bool,
 {
     /// Creates a new Filter combinator with the given inner parser, filtering function, and error message.
-    pub fn new(parser: P, filter: F, err_msg: &'static str) -> Self {
+    pub fn new(parser: P, filter: F, expected: &'static str) -> Self {
         Filter {
             parser,
             filter,
-            err_msg,
+            expected,
             _phantom: std::marker::PhantomData,
         }
     }

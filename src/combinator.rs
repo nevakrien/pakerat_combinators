@@ -488,19 +488,19 @@ pub trait CombinatorExt<T: BorrowParse = (), O: BorrowParse = T>: Combinator<T, 
         Ok((input, t.into()))
     }
 
-    ////// Wraps a parser to filter its output based on a predicate.
+    /// Wraps a parser to filter its output based on a predicate.
     ///
     /// After parsing using the inner parser, the given filtering function is applied to the result.
-    /// If the filtering function returns `true`, the output is accepted; otherwise, a parsing error is
-    /// returned with the custom error message provided.
+    /// If the filtering function returns `true`, the output is accepted; otherwise, a missmatch error is returned.
+    /// "Found x Expected {}" with a user define expected text.
     ///
-    ///this is just syntax sugar around [`Filter`]
-    fn filter<F>(self, filter_fn: F, err_msg: &'static str) -> Filter<Self, T, O, F>
+    /// This is just syntax sugar around [`Filter`]
+    fn filter<F>(self, filter_fn: F, expected: &'static str) -> Filter<Self, T, O, F>
         where
             F: for<'a> Fn(&T::Output<'a>) -> bool,
             Self: Sized,
         {
-            Filter::new(self, filter_fn, err_msg)
+            Filter::new(self, filter_fn, expected)
         }
 
 }
