@@ -29,7 +29,7 @@ use crate::combinator::Combinator;
 /// let input = Input::new(&buffer);
 ///
 /// // Define the recursive parser
-/// let parser = Rc::new(RecursiveParser::new());
+/// let parser = RecursiveParser::new();
 ///
 /// let terminal_parser = Rc::new(one_of!("expected it or ident",
 ///     Ignore::new(IdentParser),
@@ -38,8 +38,8 @@ use crate::combinator::Combinator;
 ///
 /// // Define an actual expression parser using the recursive reference.
 /// let expr_parser = one_of!("expected an expression",
-///     Ignore::new(Wrapped::new(AnyDelParser,parser.clone())),
-///     Ignore::new(Pair::new(terminal_parser.clone(),Pair::new(PunctParser, parser.clone()))),
+///     Ignore::new(Wrapped::new(AnyDelParser,&parser)),
+///     Ignore::new(Pair::new(terminal_parser.clone(),Pair::new(PunctParser, &parser))),
 ///     terminal_parser
 /// );
 ///
@@ -54,8 +54,8 @@ use crate::combinator::Combinator;
 /// assert!(remaining.eof());
 /// ```
 pub struct RecursiveParser<'parser ,T:BorrowParse, O:BorrowParse = T> {
-    pub cell: OnceCell<&'parser dyn Combinator<T, O>>,
-    pub _phantom: PhantomData<( T, O)>,
+    cell: OnceCell<&'parser dyn Combinator<T, O>>,
+    _phantom: PhantomData<( T, O)>,
 }
 
 impl<'parser , T:BorrowParse, O:BorrowParse> RecursiveParser<'parser , T, O> {
@@ -98,3 +98,4 @@ impl<'parser, T:BorrowParse, O:BorrowParse> Combinator< T, O> for RecursiveParse
         self.get().parse(input, state)
     }
 }
+
