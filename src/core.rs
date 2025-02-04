@@ -216,6 +216,11 @@ impl PartialOrd for Input<'_>{
 fn partial_cmp(&self, other: &Self) ->  Option<Ordering> { self.cursor.partial_cmp(&other.cursor) }
 }
 
+impl<'a> From<Input<'a>> for Cursor<'a>{
+
+fn from(x: Input<'a>) -> Self { x.cursor }
+}
+
 impl<'a> Input<'a> {
     /// Creates a new `Input` from a `TokenBuffer`, ensuring spans are valid.
     pub fn new(buffer: &'a TokenBuffer) -> Self {

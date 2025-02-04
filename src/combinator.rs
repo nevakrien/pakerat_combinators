@@ -1,4 +1,5 @@
 
+use std::ops::Deref;
 use crate::cache::DynCache;
 use syn::Lifetime;
 use proc_macro2::Span;
@@ -57,6 +58,12 @@ impl From<PakeratError<syn::Error>> for PakeratError<ParseError>{
 
 fn from(e: PakeratError<syn::Error>) -> Self { e.map(|x| x.into())}
 }
+
+impl From<PakeratError> for syn::Error {
+
+fn from(e: PakeratError) -> Self { e.inner().into() }
+}
+
 ///result type used for internal cache managment
 pub type Pakerat<T,E = ParseError> = Result<T,PakeratError<E>>;
 
@@ -359,7 +366,8 @@ fn test_dyn_closure_combinator_error_mapping() {
 
 
 /// Extension trait for [`Combinator`] holding useful syntax sugar
-pub trait CombinatorExt<T: BorrowParse, O: BorrowParse>: Combinator<T, O> {
+/// see individual methods for more detail
+pub trait CombinatorExt<T: BorrowParse = (), O: BorrowParse = T>: Combinator<T, O> {
     /// Creates a reference-based wrapper (`RefParser`) for the combinator.
     ///
     /// This allows a single combinator instance to be passed to multiple combinators
@@ -393,16 +401,33 @@ pub trait CombinatorExt<T: BorrowParse, O: BorrowParse>: Combinator<T, O> {
         }
     }
 
-    ///calls make(self) this is nice for piping
-    fn compose<Transform, Output>(self, make: Transform) -> Output
-    where
-        Transform: FnOnce(Self) -> Output,
-        Self: Sized,
-    {
-        make(self)
-    }
-
-    ///syntax sugar around [`MapCombinator`]
+    /// Applies a transformation function to the output of the combinator.
+    ///
+    /// This is syntax sugar around [`MapCombinator`], allowing you to modify
+    /// parsed results without changing the underlying parser logic.
+    ///
+    /// # Example
+    /// ```rust
+    /// use pakerat_combinators::combinator::{Combinator, CombinatorExt};
+    /// use pakerat_combinators::basic_parsers::IdentParser;
+    /// use pakerat_combinators::core::Input;
+    /// use pakerat_combinators::cache::BasicCache;
+    /// use syn::buffer::TokenBuffer;
+    ///
+    /// let tokens = "example".parse().unwrap();
+    /// let buffer = TokenBuffer::new2(tokens);
+    /// let input = Input::new(&buffer);
+    ///
+    /// let ident_parser = IdentParser;
+    ///
+    /// // Convert parsed identifier output into uppercase
+    /// let uppercase_parser = ident_parser.map(|ident: proc_macro2::Ident| ident.to_string().to_uppercase());
+    ///
+    /// let mut cache = BasicCache::<0>::new();
+    ///
+    /// let (_, result) = uppercase_parser.parse(input, &mut cache).unwrap();
+    /// assert_eq!(result, "EXAMPLE");
+    /// ```
     fn map<F, T2>(
         self,
         map_fn: F,
@@ -419,7 +444,31 @@ pub trait CombinatorExt<T: BorrowParse, O: BorrowParse>: Combinator<T, O> {
         }
     }
 
-    ///parses then calls into on both the outputed result and the error
+    /// Parses input calling into on both the sides of the [`Result`]
+    ///
+    /// This is mainly useful for integrating with syn
+    ///
+    /// # Example
+    /// ```rust
+    /// use pakerat_combinators::combinator::{Combinator, CombinatorExt, PakeratError};
+    /// use pakerat_combinators::core::{Input};
+    /// use pakerat_combinators::basic_parsers::AnyDelParser;
+    /// use pakerat_combinators::cache::BasicCache;
+    /// use syn::buffer::{TokenBuffer,Cursor};
+    ///
+    /// let tokens = "(content)".parse().unwrap();
+    /// let buffer = TokenBuffer::new2(tokens);
+    /// let input = Input::new(&buffer);
+    ///
+    /// let parser = AnyDelParser; // Parses any delimited group and returns Input
+    /// let mut cache = BasicCache::<0>::new();
+    ///
+    /// // Convert parsed input into a `Cursor`, handling errors as `syn::Error`
+    /// let result: Result<(Input, Cursor), syn::Error> = parser.parse_into(input, &mut cache);
+    ///
+    /// assert!(result.is_ok());
+    /// ```
+
     fn parse_into<'a,V, E2>(&self, input: Input<'a>, state: &mut dyn DynCache<'a, O>) -> Result<(Input<'a>, V), E2>
     where
         V: From<T::Output<'a>>,
@@ -435,6 +484,7 @@ impl<T: BorrowParse, O: BorrowParse, F: Combinator<T, O>> CombinatorExt<T, O> fo
 
 
 /// A combinator that transforms the output of another parser using a mapping function.
+/// see [`CombinatorExt::map`] for a full example.
 ///
 /// note that the outputs lifetime can not depend on the input.
 /// if this is a problem implement [`Combinator`] directly for MyStruct(Base)
@@ -481,6 +531,7 @@ pub struct RefParser<'parser,INNER:Combinator<T, O>,T:BorrowParse,O:BorrowParse>
     pub _phantom:PhantomData<(T,O)>
 }
 
+
 impl<T:BorrowParse,O:BorrowParse,INNER:Combinator<T, O>> Combinator<T,O> for RefParser<'_,INNER,T,O>{
 
 fn parse<'a>(&self, input: Input<'a>, state: &mut dyn DynCache<'a,O>) -> Pakerat<(Input<'a>, T::Output<'a>)> {
@@ -490,4 +541,26 @@ fn parse<'a>(&self, input: Input<'a>, state: &mut dyn DynCache<'a,O>) -> Pakerat
 fn parse_ignore<'a>(&self, input: Input<'a>, state: &mut dyn DynCache<'a,O>) -> Pakerat<Input<'a>> {
     self.inner.parse_ignore(input, state)
 }
+}
+
+impl<INNER, T, O> Deref for RefParser<'_, INNER, T, O>
+where
+    INNER: Combinator<T, O>,
+    T: BorrowParse,
+    O: BorrowParse,
+{
+    type Target = INNER;
+
+    fn deref(&self) -> &Self::Target {
+        self.inner
+    }
+}
+
+impl<'parser, INNER : Combinator<T,O>, T:BorrowParse, O:BorrowParse> RefParser<'parser, INNER, T, O>{
+    pub fn new(inner:&'parser INNER) -> Self{
+        Self{
+            inner,
+            _phantom:PhantomData
+        }
+    }
 }
