@@ -191,6 +191,30 @@ define_parser!(
 );
 define_parser!(LifetimeParser, Lifetime, lifetime, "a lifetime");
 
+/// parses a specific char that can be in [`Punct`]
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SpecificPunct(pub char);
+
+impl<O: BorrowParse> Combinator<(), O> for SpecificPunct {
+    #[inline]
+    fn parse<'a>(
+        &self,
+        input: Input<'a>,
+        _state: &mut dyn DynCache<'a, O>,
+    ) -> Pakerat<(Input<'a>, ())> {
+        if let Some((x, next)) = input.punct() {
+            if x.as_char()==self.0{
+            	return Ok((next, ()));
+
+            }
+        } 
+        Err(PakeratError::Regular(ParseError::Simple(Mismatch {
+                actual: Found::start_of(input),
+                expected: Expected::Punct(self.0),
+            })))
+    }
+}
+
 ///parses an i64 using [`syn`]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct IntParser;

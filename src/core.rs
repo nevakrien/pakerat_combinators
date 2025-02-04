@@ -113,6 +113,7 @@ impl fmt::Display for Found {
 #[derive(Clone, Copy, Debug)]
 pub enum Expected {
     Text(&'static str),
+    Punct(char),
     Spot(Span),
     End(Delimiter),
     Start(Delimiter),
@@ -137,6 +138,7 @@ impl fmt::Display for Expected {
             },
             Expected::Start(del) => write!(f, "{}", get_start_del(*del)),
             Expected::End(del) => write!(f, "{}", get_end_del(*del)),
+            Expected::Punct(c) => c.fmt(f),
         }
     }
 }

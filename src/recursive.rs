@@ -120,7 +120,7 @@ mod tests {
 use proc_macro2::Delimiter;
 use crate::combinator::CombinatorExt;
 use crate::combinator::Combinator;
-    use crate::basic_parsers::{IntParser, PunctParser};
+    use crate::basic_parsers::{IntParser,SpecificPunct};
     use crate::core::Input;
     use crate::cache::{CachedComb, BasicCache};
     use crate::multi::{Pair, Wrapped};
@@ -151,7 +151,7 @@ use crate::combinator::Combinator;
         //add num
         let add_num_parser_holder = CachedComb::new(
             one_of!("expected num or num + num",
-                Pair::new(IntParser, Pair::new(PunctParser.filter(|c| c.as_char()=='+',"expected +"), expr_parser.as_ref()))
+                Pair::new(IntParser, Pair::new(SpecificPunct('+'), expr_parser.as_ref()))
                     .map(|(lhs, (_, rhs))| lhs + rhs),
                 IntParser
             ),
@@ -166,7 +166,7 @@ use crate::combinator::Combinator;
                 DelParser(Delimiter::Parenthesis)
                 ,expr_parser.as_ref()
             ),
-            Pair::new(add_num_parser.as_ref(), Pair::new(PunctParser.filter(|c| c.as_char()=='*',"expected *"), expr_parser.as_ref()))
+            Pair::new(add_num_parser.as_ref(), Pair::new(SpecificPunct('*'), expr_parser.as_ref()))
                 .map(|(lhs, (_, rhs))| lhs * rhs),
             add_num_parser.as_ref()
         ),
