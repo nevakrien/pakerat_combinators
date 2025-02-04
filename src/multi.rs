@@ -122,6 +122,7 @@ where
 
 
 /// This struct attempts to parse an optional occurrence of an inner parser.
+///
 /// If the inner parser fails with a `Regular` error, `Maybe` will return `None` instead of failing.
 /// If the inner parser fails with a `Recursive` error, the error is propagated.
 ///
@@ -208,6 +209,7 @@ where
 
 
 /// This struct parses zero or more occurrences of an inner parser.
+///
 /// It keeps collecting results until the inner parser fails with a `Regular` error.
 /// If the inner parser fails with a `Recursive` error, the error is propagated.
 ///
@@ -296,6 +298,7 @@ where
 
 
 /// This struct parses one or more occurrences of an inner parser.
+///
 /// It behaves like `Many0` but ensures at least one successful parse before stopping.
 /// If the first attempt fails, `Many1` returns an error.
 ///
@@ -386,9 +389,9 @@ where
     }
 }
 
-/// This struct parses zero or more occurrences of an inner parser.
-/// It keeps collecting results until the inner parser fails with a `Regular` error.
-/// If the inner parser fails with a `Recursive` error, the error is propagated.
+/// This parser simply discards the output returning a ().
+/// 
+/// It attempts to avoid allocating the output using see [`Combinator::parse_ignore`] for a version that discards output.
 ///
 /// # Example Usage
 /// ```rust
@@ -537,11 +540,14 @@ where
     pub fn new(a:A,b:B) -> Self { OrLast{a,b,_phantom:PhantomData} }
 }
 
-/// Wraps a parser to provide a **custom error message** if parsing fails.
+/// Wraps a parser to provide a custom error message if parsing fails.
 ///
-/// This combinator ensures that the user **always gets a clear error message** instead of an
-/// ambiguous default one. This is used internally by `one_of!` to ensure meaningful errors.
+/// Note that [`PakeratError::Recursive`] are not effected by this.
 ///
+/// This combinator helps getting a clear error message.
+/// It is used internally by [`one_of!`] to ensure meaningful errors.
+///
+/// [`PakeratError::Recursive`]: crate::combinator::PakeratError::Recursive
 /// # Example
 /// ```rust
 /// use pakerat_combinators::multi::ErrorWrapper;
@@ -626,15 +632,18 @@ where
     }
 }
 
-/// Creates an optimal **statically dispatched** `OneOf` parser using [`OrLast`] chains.
+/// Creates a statically dispatched `OneOf` parser from arbitrary input [`Combinator`]s.
 ///
-/// This macro generates the most efficient possible chain of parsers using [`OrLast`],
-/// and **wraps the final result in [`ErrorWrapper`]** to ensure a **good error message**.
+/// This macro generates a chain of [`OrLast`] parsers, then wraps it with [`ErrorWrapper`].
 ///
-/// ## **Important Notes:**
-/// - The provided parsers **must** share an output type.  
-/// - The easiest way to ensure this is by using [`Ignore::new(Parser)`] to make the output `()`.  
-/// - This macro **does not use dynamic dispatch**; it expands into a **fully static** chain.
+/// The provided parsers must share an output type. (If this is an issue try making the output an enum) 
+///The easiest way to ensure this is by using [`Ignore`] to make the output `()`.
+///
+/// ### Performance notes
+/// This entire thing is statically compiled to become essentially a tuple on the stack. 
+/// This is nice for runtime speeds but terible for compile times.
+/// Consider the tradeoffs to using [`OneOf`]
+///
 ///
 /// # Example
 /// ```rust
@@ -744,9 +753,9 @@ macro_rules! __one_of_internal {
 ///
 /// Unlike [`one_of!`], this combinator allows an arbitrary number of parsers
 /// at runtime. However, all parsers **must be of the same type**, which often
-/// requires dynamic dispatch via `Rc<dyn Combinator<_, _, _>>`. 
-/// The issue is that this binds the lifetime of the parser to the input.
-/// If this is unacceptable, using [`one_of!`] or leaking then manually freeing the TokenBuffer can decouple the lifetimes.
+/// requires dynamic dispatch via Rc<dyn [`Combinator`]>. 
+///
+/// This introduces 2 levels of indirection which is not ideal.
 ///
 /// [`one_of!`]: crate::one_of
 ///
@@ -847,24 +856,15 @@ where
     }
 }
 
-impl< P, T, O> OneOf< P, T, O>
+impl< Parser, T, O> OneOf< Parser, T, O>
 where
-    P: Combinator<T, O>,
+    Parser: Combinator<T, O>,
     T : BorrowParse,
     O: BorrowParse,
     
 {
     /// Creates a new `OneOf` parser.
-    ///
-    /// Unlike [`one_of!`], the number of parsers **does not need to be known at compile time**.  
-    /// However, all parsers **must be of the same type**.
-    ///
-    /// # Parameters:
-    /// - `parsers`: A **boxed slice** of parsers of the **same type**.
-    /// - `err_msg`: The custom error message used when parsing fails.
-    ///
-    /// **Tip:** If your parsers have different types, use **dynamic dispatch** with `Rc<dyn Combinator>`.
-    pub fn new(parsers: Box<[P]>, err_msg: &'static str) -> Self {
+    pub fn new(parsers: Box<[Parser]>, err_msg: &'static str) -> Self {
         OneOf {
             alternatives: parsers,
             err_msg,

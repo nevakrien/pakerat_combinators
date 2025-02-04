@@ -44,7 +44,7 @@ use crate::combinator::Combinator;
 /// );
 ///
 /// // Initialize the recursive parser
-/// parser.set(expr_parser);
+/// parser.set(&expr_parser);
 ///
 ///
 /// let mut cache = BasicCache::<0>::new();
@@ -54,8 +54,8 @@ use crate::combinator::Combinator;
 /// assert!(remaining.eof());
 /// ```
 pub struct RecursiveParser<'parser ,T:BorrowParse, O:BorrowParse = T> {
-     cell: OnceCell<Box<dyn Combinator<T, O> + 'parser>>,
-    _phantom: PhantomData<( &'parser (), T, O)>,
+    pub cell: OnceCell<&'parser dyn Combinator<T, O>>,
+    pub _phantom: PhantomData<( T, O)>,
 }
 
 impl<'parser , T:BorrowParse, O:BorrowParse> RecursiveParser<'parser , T, O> {
@@ -72,18 +72,18 @@ impl<'parser , T:BorrowParse, O:BorrowParse> RecursiveParser<'parser , T, O> {
     /// Initializes the recursive parser with a concrete implementation.
     ///
     /// This function should only be called once.
-    pub fn set<P>(&self, parser: P)
+    pub fn set<P>(&self, parser:&'parser P)
     where
         P: Combinator< T, O> + 'parser  ,
     {
         self.cell
-            .set(Box::new(parser))
+            .set(parser)
             .unwrap_or_else(|_| panic!("Recursive parser already initialized"));
     }
 
     /// Retrieves the underlying parser, or panics if used before initialization.
     fn get(&self) -> &(dyn Combinator<T, O> + 'parser) {
-        self.cell.get().expect("Used uninitialized recursive parser").as_ref()
+        self.cell.get().expect("Used uninitialized recursive parser")
     }
 }
 
@@ -98,4 +98,3 @@ impl<'parser, T:BorrowParse, O:BorrowParse> Combinator< T, O> for RecursiveParse
         self.get().parse(input, state)
     }
 }
-
