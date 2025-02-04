@@ -1001,9 +1001,8 @@ use proc_macro2::Delimiter;
 fn test_oneof_parsing() {
     // Define input with an integer and a delimited integer
     let tokens: TokenStream = "42 {99}".parse().unwrap();
-    let buffer = Box::leak(Box::new(TokenBuffer::new2(tokens))); // Leak the token buffer
-    let ptr = buffer as *mut _;
-    let input = Input::new(buffer); 
+    let buffer = TokenBuffer::new2(tokens); // Leak the token buffer
+    let input = Input::new(&buffer); 
     let mut cache = FlexibleCache::new();
 
     // Create individual parsers
@@ -1025,11 +1024,6 @@ fn test_oneof_parsing() {
     let (_, parsed_del_int) = one_of_parser.parse(remaining, &mut cache).unwrap();
     assert_eq!(parsed_del_int, 99 as i64);
 
-    // this bit is optional
-    std::mem::drop(one_of_parser);
-    unsafe{
-        let _ = Box::from_raw(ptr);
-    }
 }
 
 // Macro to safely create a `TokenBuffer` and `Input` with a proper lifetime.
