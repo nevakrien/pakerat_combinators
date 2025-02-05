@@ -1,6 +1,6 @@
 use std::rc::Rc;
 use crate::core::fmt::Display;
-use proc_macro2::{Delimiter, Ident, Literal, Punct, Span, TokenStream, TokenTree};
+use proc_macro2::{Delimiter, Ident, Literal, Punct, Span, TokenTree};
 use std::cmp::Ordering;
 use std::fmt;
 use std::fmt::Formatter;
@@ -222,16 +222,17 @@ impl From<syn::Error> for ParseError {
     }
 }
 
-/// A wrapper around `syn::Cursor` that tracks the last delimiter.
+/// A wrapper around `syn::Cursor` that tracks some metadata
 #[derive(Clone, Copy)]
 pub struct Input<'a> {
     cursor: Cursor<'a>,
+    end: Cursor<'a>,
     block_end: Option<DelMark>,
 }
 
 impl PartialEq for Input<'_> {
     fn eq(&self, other: &Self) -> bool {
-        self.cursor == other.cursor
+        self.cursor == other.cursor && self.end == other.end
     }
 }
 
@@ -248,10 +249,15 @@ impl<'a> From<Input<'a>> for Cursor<'a> {
 }
 
 impl<'a> Input<'a> {
+    #[inline]
+    fn check_end(&self) -> bool{
+        self.cursor==self.end
+    }
     /// Creates a new `Input` from a `TokenBuffer`, ensuring spans are valid.
     pub fn new(buffer: &'a TokenBuffer) -> Self {
         Self {
             cursor: buffer.begin(),
+            end: Cursor::empty(),
             block_end: None, // No delimiter context initially.
         }
     }
@@ -260,22 +266,39 @@ impl<'a> Input<'a> {
     pub fn empty() -> Self {
         Self {
             cursor: Cursor::empty(),
+            end: Cursor::empty(),
+
             block_end: None,
         }
     }
 
+    /// Truncates this input to not go past `spot` so `[input,spot,rest] -> [input]`
+    pub fn truncate(self,spot:impl Into<Cursor<'a>>) -> Self{
+        let new_end = spot.into();
+        Self {
+            cursor: self.cursor,
+            end: if new_end < self.cursor { self.cursor } else { new_end },
+            block_end: self.block_end,
+        }
+        
+    }
+
     /// Returns `true` if the `Input` has reached the end of the token stream.
     pub fn eof(self) -> bool {
-        self.cursor.eof()
+        self.check_end()||self.cursor.eof()
     }
 
     /// If the `Input` points at an identifier, returns it and an `Input` at the next token.
     pub fn ident(self) -> Option<(Ident, Self)> {
+        if self.check_end(){
+            return None;
+        }
         let (ident, next_cursor) = self.cursor.ident()?;
         Some((
             ident,
             Self {
                 cursor: next_cursor,
+                end:self.end,
                 block_end: self.block_end,
             },
         ))
@@ -283,11 +306,15 @@ impl<'a> Input<'a> {
 
     /// If the `Input` points at a punctuation token, returns it and an `Input` at the next token.
     pub fn punct(self) -> Option<(Punct, Self)> {
+        if self.check_end(){
+            return None;
+        }
         let (punct, next_cursor) = self.cursor.punct()?;
         Some((
             punct,
             Self {
                 cursor: next_cursor,
+                end:self.end,
                 block_end: self.block_end,
             },
         ))
@@ -295,11 +322,15 @@ impl<'a> Input<'a> {
 
     /// If the `Input` points at a literal, returns it and an `Input` at the next token.
     pub fn literal(self) -> Option<(Literal, Self)> {
+        if self.check_end(){
+            return None;
+        }
         let (literal, next_cursor) = self.cursor.literal()?;
         Some((
             literal,
             Self {
                 cursor: next_cursor,
+                end:self.end,
                 block_end: self.block_end,
             },
         ))
@@ -308,10 +339,17 @@ impl<'a> Input<'a> {
     /// If the `Input` points at a lifetime, returns it and an `Input` at the next token.
     pub fn lifetime(self) -> Option<(syn::Lifetime, Self)> {
         let (lifetime, next_cursor) = self.cursor.lifetime()?;
+        
+        //lifetime is actually 2 tokens so its trickier
+        if next_cursor>self.end{
+            return None;
+        }
+
         Some((
             lifetime,
             Self {
                 cursor: next_cursor,
+                end:self.end,
                 block_end: self.block_end,
             },
         ))
@@ -322,10 +360,15 @@ impl<'a> Input<'a> {
     /// - The `DelimSpan` tracking the group delimiters,
     /// - An `Input` pointing at the next token after the group.
     pub fn group(self, delim: Delimiter) -> Option<(Self, DelimSpan, Self)> {
+        if self.check_end(){
+            return None;
+        }
         let (inner_cursor, delim_span, next_cursor) = self.cursor.group(delim)?;
         Some((
             Self {
                 cursor: inner_cursor,
+                end:self.end,
+
                 block_end: Some(DelMark {
                     del: delim,
                     span: delim_span.close(),
@@ -334,6 +377,8 @@ impl<'a> Input<'a> {
             delim_span,
             Self {
                 cursor: next_cursor,
+                end:self.end,
+
                 block_end: self.block_end,
             },
         ))
@@ -345,10 +390,15 @@ impl<'a> Input<'a> {
     /// - The `DelimSpan` tracking the group delimiters,
     /// - An `Input` pointing at the next token after the group.
     pub fn any_group(self) -> Option<(Self, Delimiter, DelimSpan, Self)> {
+        if self.check_end(){
+            return None;
+        }
         let (inner_cursor, delim, delim_span, next_cursor) = self.cursor.any_group()?;
         Some((
             Self {
                 cursor: inner_cursor,
+                end:self.end,
+
                 block_end: Some(DelMark {
                     del: delim,
                     span: delim_span.close(),
@@ -358,20 +408,20 @@ impl<'a> Input<'a> {
             delim_span,
             Self {
                 cursor: next_cursor,
+                end:self.end,
+
                 block_end: self.block_end,
             },
         ))
-    }
-
-    /// Copies all remaining tokens into a `TokenStream` from the current `Input` position.
-    pub fn token_stream(self) -> TokenStream {
-        self.cursor.token_stream()
     }
 
     /// If the `Input` points at a `TokenTree`, returns it along with an `Input` pointing at the next token.
     ///
     /// If the token is a group, updates `block_end` with its closing delimiter information.
     pub fn token_tree(self) -> Option<(TokenTree, Self)> {
+        if self.check_end(){
+            return None;
+        }
         let (tree, next_cursor) = self.cursor.token_tree()?;
         let new_block_end = match &tree {
             TokenTree::Group(group) => Some(DelMark {
@@ -384,6 +434,8 @@ impl<'a> Input<'a> {
             tree,
             Self {
                 cursor: next_cursor,
+                end:self.end,
+
                 block_end: new_block_end,
             },
         ))
@@ -396,6 +448,8 @@ impl<'a> Input<'a> {
     }
 
     /// Returns the internal `Cursor` for direct access.
+    /// note that this ignores the end set for thi Input
+    /// cursors from this method can go as far as they want
     #[inline(always)]
     pub fn cursor(&self) -> Cursor<'a> {
         self.cursor

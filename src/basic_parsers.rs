@@ -21,14 +21,14 @@ use syn::parse::ParseStream;
 use syn::Lifetime;
 use syn::LitInt;
 
-///detects an exact match between an input stream and the stream from start to end (not including end)
+/// Detects an exact match between an input stream and the expected stream.
+/// Returns the remaining `Input` if successful, otherwise returns a `Mismatch` error.
 pub fn streams_match<'a>(
-    mut start: Input<'_>,
-    end: Input<'_>,
+    mut expected: Input<'_>,
     mut input: Input<'a>,
 ) -> Result<Input<'a>, Mismatch> {
-    while start != end {
-        let (new_start, a) = match start.token_tree() {
+    loop {
+        let (new_expected, a) = match expected.token_tree() {
             None => break,
             Some((tree, spot)) => (spot, tree),
         };
@@ -40,7 +40,7 @@ pub fn streams_match<'a>(
                     None => Found::EOF(input.end_span()),
                 };
                 return Err(Mismatch {
-                    expected: Expected::Spot(start.span()),
+                    expected: Expected::Spot(expected.span()),
                     actual,
                 });
             }
@@ -52,12 +52,12 @@ pub fn streams_match<'a>(
             (TokenTree::Punct(x), TokenTree::Punct(y)) => x.as_char() == y.as_char(),
             (TokenTree::Literal(x), TokenTree::Literal(y)) => x.to_string() == y.to_string(),
             (TokenTree::Group(_), TokenTree::Group(_)) => {
-                let (a, del_a, _, _) = start.any_group().unwrap();
-                let (b, del_b, _, _) = input.any_group().unwrap();
+                let (a_inner, del_a, _, _) = expected.any_group().unwrap();
+                let (b_inner, del_b, _, _) = input.any_group().unwrap();
                 if del_a != del_b {
                     false
                 } else {
-                    let remaining = streams_match(a, end, b)?;
+                    let remaining = streams_match(a_inner, b_inner)?;
                     if !remaining.eof() {
                         return Err(Mismatch {
                             expected: Expected::End(del_a),
@@ -67,22 +67,22 @@ pub fn streams_match<'a>(
                     true
                 }
             }
-
             _ => false,
         };
 
         if !matches {
             return Err(Mismatch {
-                expected: Expected::start_of(start),
+                expected: Expected::start_of(expected),
                 actual: Found::start_of(input),
             });
         }
 
         input = new_input;
-        start = new_start;
+        expected = new_expected;
     }
     Ok(input)
 }
+
 
 // pub fn streams_just_match<'a>(mut start:Input<'_>,end:Input<'_>,mut input:Input<'a>) -> Result<Input<'a>,DumbyError>{
 // 	while start!=end {
@@ -133,10 +133,7 @@ pub fn streams_match<'a>(
 
 ///detects an exact match between an input stream and the stream from start to end (not including end)
 #[derive(Clone, Copy)]
-pub struct MatchParser<'b> {
-    pub start: Input<'b>,
-    pub end: Input<'b>,
-}
+pub struct MatchParser<'b>(pub Input<'b>);
 
 impl<O: BorrowParse> Combinator<(), O> for MatchParser<'_> {
     fn parse<'a>(
@@ -144,7 +141,7 @@ impl<O: BorrowParse> Combinator<(), O> for MatchParser<'_> {
         input: Input<'a>,
         _state: &mut dyn DynCache<'a, O>,
     ) -> Pakerat<(Input<'a>, ())> {
-        let ans = streams_match(self.start, self.end, input)
+        let ans = streams_match(self.0, input)
             .map_err(|e| PakeratError::<ParseError>::Regular(e.into()))?;
         Ok((ans, ()))
     }
@@ -367,6 +364,7 @@ impl<O: BorrowParse> Combinator<Input<'_>, O> for AnyDelParser {
     }
 }
 
+//these are mostly as a way to tese Input 
 #[cfg(test)]
 mod exact_match_tests {
 
@@ -397,10 +395,7 @@ mod exact_match_tests {
     fn match_parser_exact_match_dumby_error() {
         token_cursor!(buffer1, "let x = 42;");
         token_cursor!(buffer2, "let x = 42;");
-        let parser = MatchParser {
-            start: buffer1,
-            end: Input::empty(),
-        };
+        let parser = MatchParser(buffer1);
 
         let mut cache: BasicCache<0> = HashMap::new();
 
@@ -415,10 +410,7 @@ mod exact_match_tests {
     fn match_parser_exact_match_syn_error() {
         token_cursor!(buffer1, "let x = 42;");
         token_cursor!(buffer2, "let x = 42;");
-        let parser = MatchParser {
-            start: buffer1,
-            end: Input::empty(),
-        };
+        let parser = MatchParser(buffer1);
 
         let mut cache: BasicCache<0> = HashMap::new();
 
@@ -433,10 +425,7 @@ mod exact_match_tests {
     fn match_parser_subset_should_pass() {
         token_cursor!(buffer1, "let x = 42;");
         token_cursor!(buffer2, "let x = 42; let y = 10;");
-        let parser = MatchParser {
-            start: buffer1,
-            end: Input::empty(),
-        };
+        let parser = MatchParser(buffer1);
 
         let mut cache: BasicCache<0> = HashMap::new();
 
@@ -451,10 +440,7 @@ mod exact_match_tests {
     fn match_parser_mismatch_dumby_error() {
         token_cursor!(buffer1, "let x = 42;");
         token_cursor!(buffer2, "let x = 43;");
-        let parser = MatchParser {
-            start: buffer1,
-            end: Input::empty(),
-        };
+        let parser = MatchParser(buffer1);
 
         let mut cache: BasicCache<0> = HashMap::new();
 
@@ -469,10 +455,7 @@ mod exact_match_tests {
     fn match_parser_mismatch_syn_error() {
         token_cursor!(buffer1, "let x = 42;");
         token_cursor!(buffer2, "let x = 43;");
-        let parser = MatchParser {
-            start: buffer1,
-            end: Input::empty(),
-        };
+       let parser = MatchParser(buffer1);
 
         let mut cache: BasicCache<0> = HashMap::new();
 
@@ -487,10 +470,7 @@ mod exact_match_tests {
     fn match_parser_incomplete_input_dumby_error() {
         token_cursor!(buffer1, "let x = 42;");
         token_cursor!(buffer2, "let x =");
-        let parser = MatchParser {
-            start: buffer1,
-            end: Input::empty(),
-        };
+        let parser = MatchParser(buffer1);
 
         let mut cache: BasicCache<0, ()> = HashMap::new();
 
@@ -505,10 +485,7 @@ mod exact_match_tests {
     fn match_parser_incomplete_input_syn_error() {
         token_cursor!(buffer1, "let x = 42;");
         token_cursor!(buffer2, "let x =");
-        let parser = MatchParser {
-            start: buffer1,
-            end: Input::empty(),
-        };
+        let parser = MatchParser(buffer1);
 
         let mut cache: BasicCache<0> = HashMap::new();
 
@@ -523,10 +500,7 @@ mod exact_match_tests {
     fn match_parser_extra_tokens_fail() {
         token_cursor!(buffer1, "let x = 42;");
         token_cursor!(buffer2, "let x = 42; let y = 10; let z = 20;");
-        let parser = MatchParser {
-            start: buffer2,
-            end: Input::empty(),
-        }; // Reverse case: expected is longer
+        let parser = MatchParser(buffer2);// Reverse case: expected is longer
 
         let mut cache: BasicCache<0> = HashMap::new();
 
@@ -555,7 +529,7 @@ mod exact_match_tests {
 
         let end = input; // This should point to the position after `42;`
 
-        let parser = MatchParser { start, end };
+        let parser = MatchParser (start.truncate(end));
 
         let mut cache: BasicCache<0> = HashMap::new();
 
