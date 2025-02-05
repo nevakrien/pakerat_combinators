@@ -4,6 +4,3 @@ in terms of philosophy the goal is that it would take active dumb actions by the
 
 
 the libarary is aimed at interactive devlopment and would ideally have an assosited parser combinator that can work directly in the editor as a macro (which is much better than the usual mess that comes with these)
-
-# TODO 
-make one_of! give a mismatch instead of a message error.

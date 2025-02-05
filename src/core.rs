@@ -133,12 +133,12 @@ impl fmt::Display for Expected {
         match self {
             Expected::Text(s) => write!(f, "{}", s),
             Expected::Spot(span) => match span.source_text() {
-                Some(s) => write!(f, "{}", s),
+                Some(s) => write!(f, "\"{}\"", s),
                 None => write!(f, "<missing source : {:?}>", span),
             },
-            Expected::Start(del) => write!(f, "{}", get_start_del(*del)),
-            Expected::End(del) => write!(f, "{}", get_end_del(*del)),
-            Expected::Punct(c) => c.fmt(f),
+            Expected::Start(del) => write!(f, "\"{}\"", get_start_del(*del)),
+            Expected::End(del) => write!(f, "\"{}\"", get_end_del(*del)),
+            Expected::Punct(c) => write!(f, "\"{}\"",c),
         }
     }
 }
@@ -153,7 +153,7 @@ impl fmt::Display for Mismatch {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "Expected \"{}\" but found \"{}\"",
+            "Expected {} but found \"{}\"",
             self.expected, self.actual
         )
     }

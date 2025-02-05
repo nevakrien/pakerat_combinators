@@ -565,10 +565,10 @@ where
 }
 
 /// Wraps a parser to provide a custom error message if parsing fails.
+/// The returned error is a [`Mismatch`] with the expected field as text.
+/// Note that [`PakeratError::Recursive`] is not affected by this.
 ///
-/// Note that [`PakeratError::Recursive`] are not effected by this.
-///
-/// This combinator helps getting a clear error message.
+/// This combinator helps in getting a clear error message.
 /// It is used internally by [`one_of!`] to ensure meaningful errors.
 ///
 /// [`PakeratError::Recursive`]: crate::combinator::PakeratError::Recursive
@@ -587,7 +587,7 @@ where
 ///
 /// let parser = ErrorWrapper {
 ///     parser: IdentParser,
-///     err_msg: "expected an identifier",
+///     expected: "a name",
 ///     _phantom: std::marker::PhantomData,
 /// };
 ///
@@ -595,10 +595,11 @@ where
 /// let result = parser.parse(input, &mut cache);
 ///
 /// match result {
-///     Err(PakeratError::Regular(ParseError::Message(_, msg))) => {
-///         assert_eq!(msg, "expected an identifier");
+///     Err(PakeratError::Regular(e)) => {
+///         let msg = e.to_string();
+///         assert_eq!(msg, "Expected a name but found \"123\"");
 ///     }
-///     _ => panic!("Expected a `ParseError::Message` with the correct error text"),
+///     _ => panic!("Expected a `PakeratError::Regular` with the correct error text"),
 /// }
 /// ```
 pub struct ErrorWrapper<P, T = (), O = T>
@@ -610,8 +611,8 @@ where
     /// The internal parser to be wrapped.
     pub parser: P,
     /// The custom error message to be used if parsing fails.
-    pub err_msg: &'static str,
-    /// Phantom data to tie lifetimes and types together.
+    pub expected: &'static str,
+    /// Phantom data to let us do generics
     pub _phantom: PhantomData<(T, O)>,
 }
 
@@ -629,9 +630,11 @@ where
         match self.parser.parse(input, cache) {
             Ok((next_input, result)) => Ok((next_input, result)),
             Err(PakeratError::Recursive(e)) => Err(PakeratError::Recursive(e)),
-            Err(PakeratError::Regular(_)) => Err(PakeratError::Regular(ParseError::Message(
-                input.span(),
-                self.err_msg,
+            Err(PakeratError::Regular(_)) => Err(PakeratError::Regular(ParseError::Simple(
+                Mismatch{
+                    actual:Found::start_of(input),
+                    expected:Expected::Text(self.expected),
+                }
             ))),
         }
     }
@@ -644,9 +647,11 @@ where
         match self.parser.parse_ignore(input, cache) {
             Ok(next_input) => Ok(next_input),
             Err(PakeratError::Recursive(e)) => Err(PakeratError::Recursive(e)),
-            Err(PakeratError::Regular(_)) => Err(PakeratError::Regular(ParseError::Message(
-                input.span(),
-                self.err_msg,
+            Err(PakeratError::Regular(_)) => Err(PakeratError::Regular(ParseError::Simple(
+                Mismatch{
+                    actual:Found::start_of(input),
+                    expected:Expected::Text(self.expected),
+                }
             ))),
         }
     }
@@ -658,10 +663,10 @@ where
     T: BorrowParse,
     O: BorrowParse,
 {
-    pub fn new(parser: P, err_msg: &'static str) -> Self {
+    pub fn new(parser: P, expected: &'static str) -> Self {
         ErrorWrapper {
             parser,
-            err_msg,
+            expected,
             _phantom: PhantomData,
         }
     }
@@ -694,7 +699,7 @@ where
 /// let buffer = TokenBuffer::new2(tokens);
 /// let input = Input::new(&buffer);
 ///
-/// let parser = one_of!("expected an identifier, an integer, or punctuation",
+/// let parser = one_of!("an identifier, an integer, or punctuation",
 ///     Ignore::new(IdentParser),
 ///     Ignore::new(IntParser),
 ///     Ignore::new(PunctParser)
@@ -761,7 +766,7 @@ macro_rules! one_of {
     ($err:expr, $first:expr $(, $rest:expr)+ $(,)?) => {
         $crate::multi::ErrorWrapper {
             parser: $crate::__one_of_internal!($first $(, $rest)+),
-            err_msg: $err,
+            expected: $err,
             _phantom: std::marker::PhantomData,
         }
     };
@@ -784,6 +789,7 @@ macro_rules! __one_of_internal {
     };
 }
 /// A `OneOf` combinator that attempts multiple parsers in sequence.
+/// On fail would return a [`Mismatch`] error
 ///
 /// Unlike [`one_of!`], this combinator allows an arbitrary number of parsers
 /// at runtime. However, all parsers **must be of the same type**, which often
@@ -822,7 +828,7 @@ macro_rules! __one_of_internal {
 /// }) as Rc<dyn Combinator<_, _>>;
 ///
 /// // Create OneOf parser with both alternatives
-/// let one_of_parser = OneOf::new(vec![int_parser, delimited_int_parser].into_boxed_slice(), "Expected int or {int}");
+/// let one_of_parser = OneOf::new(vec![int_parser, delimited_int_parser].into_boxed_slice(), "an int or {int}");
 ///
 /// // Parse first integer
 /// let (remaining, parsed_int) = one_of_parser.parse(input, &mut cache).unwrap();
@@ -847,8 +853,8 @@ where
 {
     /// A list of parsers of the **same type**, stored in a boxed slice.
     pub alternatives: Box<[P]>,
-    /// The error message returned if all alternatives fail.
-    pub err_msg: &'static str,
+    /// A description of the expected part
+    pub expected: &'static str,
     /// Phantom data to tie lifetimes and types together.
     pub _phantom: PhantomData<(T, O)>,
 }
@@ -871,9 +877,11 @@ where
                 Err(PakeratError::Regular(_)) => {} // Try next parser
             }
         }
-        Err(PakeratError::Regular(ParseError::Message(
-            input.span(),
-            self.err_msg,
+        Err(PakeratError::Regular(ParseError::Simple(
+            Mismatch{
+                actual:Found::start_of(input),
+                expected:Expected::Text(self.expected),
+            }
         )))
     }
 
@@ -889,9 +897,11 @@ where
                 Err(PakeratError::Regular(_)) => {} // Try next parser
             }
         }
-        Err(PakeratError::Regular(ParseError::Message(
-            input.span(),
-            self.err_msg,
+        Err(PakeratError::Regular(ParseError::Simple(
+            Mismatch{
+                actual:Found::start_of(input),
+                expected:Expected::Text(self.expected),
+            }
         )))
     }
 }
@@ -903,10 +913,10 @@ where
     O: BorrowParse,
 {
     /// Creates a new `OneOf` parser.
-    pub fn new(parsers: Box<[Parser]>, err_msg: &'static str) -> Self {
+    pub fn new(parsers: Box<[Parser]>, expected: &'static str) -> Self {
         OneOf {
             alternatives: parsers,
-            err_msg,
+            expected,
             _phantom: PhantomData,
         }
     }
@@ -1200,7 +1210,7 @@ mod tests {
         let input = Input::new(&buffer);
 
         let parser = one_of!(
-            "expected an identifier, an integer, or punctuation",
+            "an identifier, an integer, or punctuation",
             Ignore::new(IdentParser),
             Ignore::new(IntParser),
             Ignore::new(PunctParser)
@@ -1234,10 +1244,13 @@ mod tests {
         let result = parser.parse(input, &mut cache);
 
         match result {
-            Err(PakeratError::Regular(ParseError::Message(_, msg))) => {
-                assert_eq!(msg, "expected an identifier, an integer, or punctuation");
+            Err(PakeratError::Regular(ParseError::Simple(
+                Mismatch{actual: _,
+                    expected:Expected::Text(msg)
+                }))) => {
+                assert_eq!(msg, "an identifier, an integer, or punctuation");
             }
-            _ => panic!("Expected a `ParseError::Message` with the correct error text"),
+            _ => panic!("Expected a `ParseError::Simple` with the correct error text"),
         }
     }
 
