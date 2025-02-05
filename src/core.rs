@@ -1,3 +1,4 @@
+use std::rc::Rc;
 use crate::core::fmt::Display;
 use proc_macro2::{Delimiter, Ident, Literal, Punct, Span, TokenStream, TokenTree};
 use std::cmp::Ordering;
@@ -177,7 +178,7 @@ pub enum ParseError {
     Simple(Mismatch),
     Message(Span, &'static str),
     OwnedMessage(Span, Box<str>),
-    Syn(syn::Error),
+    Syn(Rc<syn::Error>),
 }
 
 impl Display for ParseError {
@@ -204,7 +205,7 @@ impl From<ParseError> for syn::Error {
             ParseError::Simple(mismatch) => mismatch.into(), // Uses Mismatch's Into<syn::Error>
             ParseError::Message(span, message) => syn::Error::new(span, message),
             ParseError::OwnedMessage(span, message) => syn::Error::new(span, message),
-            ParseError::Syn(error) => error, // Already a syn::Error
+            ParseError::Syn(rc) => (&*rc).clone(), // Already a syn::Error
         }
     }
 }
@@ -217,7 +218,7 @@ impl From<Mismatch> for ParseError {
 
 impl From<syn::Error> for ParseError {
     fn from(e: syn::Error) -> Self {
-        ParseError::Syn(e)
+        ParseError::Syn(e.into())
     }
 }
 

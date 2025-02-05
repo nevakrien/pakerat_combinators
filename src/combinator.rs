@@ -1,4 +1,6 @@
-use crate::multi::Filter;
+use crate::core::Expected;
+use crate::core::Found;
+use crate::core::Mismatch;
 use crate::cache::DynCache;
 use crate::core::Input;
 use crate::core::ParseError;
@@ -349,7 +351,7 @@ fn test_dyn_closure_combinator_error_mapping() {
                     let err: syn::Error = e.into(); // Explicitly create the `err` variable
                     let mut new_err = syn::Error::new(err.span(), "failed doing something");
                     new_err.combine(err); // Capture the original error
-                    ParseError::Syn(new_err) // Return the transformed error
+                    ParseError::Syn(new_err.into()) // Return the transformed error
                 })
             })
         };
@@ -594,6 +596,127 @@ impl<'parser, INNER: Combinator<T, O>, T: BorrowParse, O: BorrowParse>
         Self {
             inner,
             _phantom: PhantomData,
+        }
+    }
+}
+
+/// Wraps a parser to filter its output based on a predicate.
+///
+/// After parsing using the inner parser, the given filtering function is applied to the result.
+/// If the filtering function returns `true`, the output is accepted; otherwise, a missmatch error is returned.
+/// "Found x Expected {}" with a user define expected text.
+///
+/// # Example
+/// ```rust
+/// use pakerat_combinators::combinator::Filter;
+/// use pakerat_combinators::basic_parsers::IdentParser;
+/// use pakerat_combinators::combinator::Combinator;
+/// use pakerat_combinators::cache::BasicCache;
+/// use pakerat_combinators::core::Input;
+/// use syn::buffer::TokenBuffer;
+///
+/// let tokens = "my_var".parse().unwrap();
+/// let buffer = TokenBuffer::new2(tokens);
+/// let input = Input::new(&buffer);
+///
+/// // Create a parser that accepts identifiers that are not equal to "forbidden"
+/// let parser = Filter::new(
+///     IdentParser,
+///     |ident| {
+///         ident != "forbidden"
+///     },
+///     "identifier cannot be 'forbidden'"
+/// );
+///
+/// let mut cache = BasicCache::<0>::new();
+/// let (_next_input, result) = parser.parse(input, &mut cache).unwrap();
+/// assert_eq!(result, "my_var".to_string());
+/// ```
+pub struct Filter<P, T, O, F>
+where
+    P: Combinator<T, O>,
+    T: BorrowParse,
+    O: BorrowParse,
+    // The filter function accepts a reference to the parsed output and returns a bool.
+    // We require it to work for any lifetime.
+    F: for<'a> Fn(&T::Output<'a>) -> bool,
+{
+    /// The inner parser whose output will be filtered.
+    pub parser: P,
+    /// The filtering function that determines if the parsed output is acceptable.
+    pub filter: F,
+    /// the text that would be shown in the error as "Found X expected {}"
+    pub expected: &'static str,
+    /// Used so we can have generics.
+    pub _phantom: std::marker::PhantomData<(T, O)>,
+}
+
+impl<P, T, O, F> Combinator<T, O> for Filter<P, T, O, F>
+where
+    P: Combinator<T, O>,
+    T: BorrowParse,
+    O: BorrowParse,
+    F: for<'a> Fn(&T::Output<'a>) -> bool,
+{
+    fn parse<'a>(
+        &self,
+        input: Input<'a>,
+        cache: &mut dyn DynCache<'a, O>,
+    ) -> Pakerat<(Input<'a>, T::Output<'a>)> {
+        match self.parser.parse(input, cache) {
+            Ok((next_input, result)) => {
+                if (self.filter)(&result) {
+                    Ok((next_input, result))
+                } else {
+                    Err(PakeratError::Regular(
+                        ParseError::Simple(Mismatch {
+                            actual: Found::start_of(input),
+                            expected: Expected::Text(self.expected),
+                        })
+                    ))
+                }
+            }
+            Err(e) => Err(e),
+        }
+    }
+
+    fn parse_ignore<'a>(
+        &self,
+        input: Input<'a>,
+        cache: &mut dyn DynCache<'a, O>,
+    ) -> Pakerat<Input<'a>> {
+        match self.parser.parse(input, cache) {
+            Ok((next_input, result)) => {
+                if (self.filter)(&result) {
+                    Ok(next_input)
+                } else {
+                    Err(PakeratError::Regular(
+                        ParseError::Simple(Mismatch {
+                            actual: Found::start_of(input),
+                            expected: Expected::Text(self.expected),
+                        })
+                    ))
+                }
+            }
+            Err(e) => Err(e),
+        }
+    }
+}
+
+impl<P, T, O, F> Filter<P, T, O, F>
+where
+    P: Combinator<T, O>,
+    T: BorrowParse,
+    O: BorrowParse,
+    F: for<'a> Fn(&T::Output<'a>) -> bool,
+{
+    /// Creates a new Filter combinator with the given inner parser, filtering function, and error message.
+    pub fn new(parser: P, filter: F, expected: &'static str) -> Self {
+        Filter {
+            parser,
+            filter,
+            expected,
+            _phantom: std::marker::PhantomData,
         }
     }
 }

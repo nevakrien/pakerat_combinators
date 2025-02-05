@@ -216,7 +216,8 @@ impl<O: BorrowParse> Combinator<(), O> for SpecificPunct {
     }
 }
 
-/// Parses a specific word that can be stored as [`String`], [`&'static str`], or [`Arc<str>`]
+/// Parses a specific word that can be stored as [`&'static str`], [`String`], or [`Arc<str>`].
+/// The error on this will allocate heap memory for "" if this is not needed see [`WordNoError`]
 pub struct SpecificWord<STR: Deref<Target = str>>(pub STR);
 
 impl<STR: Deref<Target = str>, O: BorrowParse> Combinator<(), O> for SpecificWord<STR> {
@@ -238,6 +239,25 @@ impl<STR: Deref<Target = str>, O: BorrowParse> Combinator<(), O> for SpecificWor
     }
 }
 
+/// Parses a specific word that can be stored as [`&'static str`], [`String`], or [`Arc<str>`].
+/// the error is returned as a [`ParseError::Empty`]
+pub struct WordNoError<STR: Deref<Target = str>>(pub STR);
+
+impl<STR: Deref<Target = str>, O: BorrowParse> Combinator<(), O> for WordNoError<STR> {
+    #[inline]
+    fn parse<'a>(
+        &self,
+        input: Input<'a>,
+        _state: &mut dyn DynCache<'a, O>,
+    ) -> Pakerat<(Input<'a>, ())> {
+        if let Some((x, next)) = input.ident() {
+            if x == self.0.deref() {
+                return Ok((next, ()));
+            }
+        } 
+        Err(PakeratError::Regular(ParseError::Empty))
+    }
+}
 
 ///parses an i64 using [`syn`]
 #[derive(Debug, Clone, Copy, PartialEq)]

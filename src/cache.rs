@@ -490,7 +490,7 @@ where
         cache: &mut dyn DynCache<'a, T>,
     ) -> Pakerat<(Input<'a>, T::Output<'a>)> {
         parse_cached(cache, input, self.key, &self.inner, || {
-            ParseError::Syn(syn::Error::new(input.span(), self.message.to_string()))
+            ParseError::Message(input.span(), self.message)
         })
     }
 }
