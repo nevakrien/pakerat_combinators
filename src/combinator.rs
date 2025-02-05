@@ -89,7 +89,7 @@ impl<E: PartialEq + Error + Clone> PartialEq for PakeratError<E> {
 /// making it possible to represent parsed values that borrow from their source.
 ///
 /// note that the type itself is entirly decorative, this shows up when you see Input<'static> which in fact has Output<'a>=Input<'a>.
-pub trait BorrowParse {
+pub trait Parsable {
     /// The output type produced by the combinator.
     ///
     /// - `'a` represents the lifetime of the input being parsed.
@@ -98,19 +98,19 @@ pub trait BorrowParse {
 }
 
 ///this is the main reason we want it
-impl BorrowParse for Input<'_> {
+impl Parsable for Input<'_> {
     type Output<'a> = Input<'a>;
 }
 
 macro_rules! impl_borrow_parse {
     ($($t:ty),*) => {
-        $(impl $crate::combinator::BorrowParse for $t {
+        $(impl $crate::combinator::Parsable for $t {
             type Output<'a> = $t;
         })*
     };
 }
 
-// Implement `BorrowParse` for common types
+// Implement `Parsable` for common types
 impl_borrow_parse!(
     (),
     u8,
@@ -131,10 +131,10 @@ impl_borrow_parse!(
 );
 impl_borrow_parse!(Ident, Punct, Literal, TokenTree, Group, Delimiter, Span, Lifetime);
 
-// Macro to implement BorrowParse for generic containers
+// Macro to implement Parsable for generic containers
 macro_rules! impl_borrow_parse_for_container {
     ($container:ident <T> $(, $extra:ty)?) => {
-        impl<T: BorrowParse $(+ $extra)?> BorrowParse for $container<T> {
+        impl<T: Parsable $(+ $extra)?> Parsable for $container<T> {
             type Output<'a> = $container<T::Output<'a>>;
         }
     };
@@ -148,7 +148,7 @@ impl_borrow_parse_for_container!(Arc<T>);
 
 macro_rules! impl_borrow_parse_for_array_container {
     ($container:ident <[T]> $(, $extra:ty)?) => {
-        impl<T: BorrowParse $(+ $extra)?> BorrowParse for $container<[T]> {
+        impl<T: Parsable $(+ $extra)?> Parsable for $container<[T]> {
             type Output<'a> = $container<T::Output<'a>>;
         }
     };
@@ -158,13 +158,13 @@ impl_borrow_parse_for_array_container!(Box<[T]>);
 impl_borrow_parse_for_array_container!(Rc<[T]>);
 impl_borrow_parse_for_array_container!(Arc<[T]>);
 
-impl<V: BorrowParse, E: BorrowParse> BorrowParse for Result<V, E> {
+impl<V: Parsable, E: Parsable> Parsable for Result<V, E> {
     type Output<'a> = Result<V::Output<'a>, E::Output<'a>>;
 }
 
 macro_rules! impl_borrow_parse_for_tuples {
     ($( $T:ident ),*) => {
-        impl<$( $T: BorrowParse ),*> BorrowParse for ($( $T, )*) {
+        impl<$( $T: Parsable ),*> Parsable for ($( $T, )*) {
             type Output<'a> = ($( $T::Output<'a>, )*);
         }
     };
@@ -190,7 +190,7 @@ impl_borrow_parse_for_tuples!(T1, T2, T3, T4, T5, T6, T7, T8);
 ///
 /// [`map`]: crate::combinator::CombinatorExt::map
 /// [`multi`]: crate::multi
-pub trait Combinator<T: BorrowParse = (), O: BorrowParse = T> {
+pub trait Combinator<T: Parsable = (), O: Parsable = T> {
     /// Parses the given input, utilizing the provided cache.
     ///
     /// Returns a [`Pakerat`] result containing the remaining input and the parsed output.
@@ -220,8 +220,8 @@ macro_rules! impl_combinator_for_wrappers {
     ($wrapper:ty) => {
         impl<T, O> Combinator<T, O> for $wrapper
         where
-            O: BorrowParse,
-            T: BorrowParse,
+            O: Parsable,
+            T: Parsable,
         {
             fn parse<'a>(
                 &self,
@@ -256,8 +256,8 @@ macro_rules! impl_combinator_for_wrapper_p {
     ($wrapper:ty) => {
         impl<T, O, P> Combinator<T, O> for $wrapper
         where
-            O: BorrowParse,
-            T: BorrowParse,
+            O: Parsable,
+            T: Parsable,
             P: Combinator<T, O>,
         {
             fn parse<'a>(
@@ -290,8 +290,8 @@ impl_combinator_for_wrapper_p!(Arc<P>);
 impl<F, T, O> Combinator<T, O> for F
 where
     F: for<'a> Fn(Input<'a>, &mut dyn DynCache<'a, O>) -> Pakerat<(Input<'a>, T::Output<'a>)>,
-    O: BorrowParse,
-    T: BorrowParse,
+    O: Parsable,
+    T: Parsable,
 {
     fn parse<'a>(
         &self,
@@ -376,7 +376,7 @@ fn test_dyn_closure_combinator_error_mapping() {
 
 /// Extension trait for [`Combinator`] holding useful syntax sugar
 /// see individual methods for more detail
-pub trait CombinatorExt<T: BorrowParse = (), O: BorrowParse = T>: Combinator<T, O> {
+pub trait CombinatorExt<T: Parsable = (), O: Parsable = T>: Combinator<T, O> {
     /// Creates a reference-based wrapper (`RefParser`) for the combinator.
     ///
     /// This allows a single combinator instance to be passed to multiple combinators
@@ -443,7 +443,7 @@ pub trait CombinatorExt<T: BorrowParse = (), O: BorrowParse = T>: Combinator<T, 
     fn map<F, T2>(self, map_fn: F) -> MapCombinator<Self, F, T, T2, O>
     where
         F: for<'a> Fn(T::Output<'a>) -> T2,
-        T2: for<'a> BorrowParse<Output<'a> = T2>,
+        T2: for<'a> Parsable<Output<'a> = T2>,
         Self: Sized,
     {
         MapCombinator {
@@ -515,7 +515,7 @@ pub trait CombinatorExt<T: BorrowParse = (), O: BorrowParse = T>: Combinator<T, 
 
 }
 
-impl<T: BorrowParse, O: BorrowParse, F: Combinator<T, O>> CombinatorExt<T, O> for F {}
+impl<T: Parsable, O: Parsable, F: Combinator<T, O>> CombinatorExt<T, O> for F {}
 
 /// A combinator that transforms the output of another parser using a mapping function.
 /// see [`CombinatorExt::map`] for a full example.
@@ -526,9 +526,9 @@ pub struct MapCombinator<Base, F, In, Out, Cached>
 where
     Base: Combinator<In, Cached>,
     F: for<'a> Fn(In::Output<'a>) -> Out,
-    In: BorrowParse,
-    Out: for<'a> BorrowParse<Output<'a> = Out>,
-    Cached: BorrowParse,
+    In: Parsable,
+    Out: for<'a> Parsable<Output<'a> = Out>,
+    Cached: Parsable,
 {
     pub inner: Base,
     pub map_fn: F,
@@ -538,10 +538,10 @@ where
 impl<Base, F, In, Out, Cached> Combinator<Out, Cached> for MapCombinator<Base, F, In, Out, Cached>
 where
     Base: Combinator<In, Cached>,
-    In: BorrowParse,
-    Out: for<'a> BorrowParse<Output<'a> = Out>,
+    In: Parsable,
+    Out: for<'a> Parsable<Output<'a> = Out>,
     F: for<'a> Fn(In::Output<'a>) -> Out,
-    Cached: BorrowParse,
+    Cached: Parsable,
 {
     fn parse<'a>(
         &self,
@@ -559,12 +559,12 @@ where
 /// an existing combinator to be reused in multiple combinator constructions without
 /// ownership issues. See [`CombinatorExt::as_ref`] for a full example.
 #[derive(Clone, Copy)]
-pub struct RefParser<'parser, INNER: Combinator<T, O>, T: BorrowParse, O: BorrowParse> {
+pub struct RefParser<'parser, INNER: Combinator<T, O>, T: Parsable, O: Parsable> {
     pub inner: &'parser INNER,
     pub _phantom: PhantomData<(T, O)>,
 }
 
-impl<T: BorrowParse, O: BorrowParse, INNER: Combinator<T, O>> Combinator<T, O>
+impl<T: Parsable, O: Parsable, INNER: Combinator<T, O>> Combinator<T, O>
     for RefParser<'_, INNER, T, O>
 {
     fn parse<'a>(
@@ -587,8 +587,8 @@ impl<T: BorrowParse, O: BorrowParse, INNER: Combinator<T, O>> Combinator<T, O>
 impl<INNER, T, O> Deref for RefParser<'_, INNER, T, O>
 where
     INNER: Combinator<T, O>,
-    T: BorrowParse,
-    O: BorrowParse,
+    T: Parsable,
+    O: Parsable,
 {
     type Target = INNER;
 
@@ -597,7 +597,7 @@ where
     }
 }
 
-impl<'parser, INNER: Combinator<T, O>, T: BorrowParse, O: BorrowParse>
+impl<'parser, INNER: Combinator<T, O>, T: Parsable, O: Parsable>
     RefParser<'parser, INNER, T, O>
 {
     pub fn new(inner: &'parser INNER) -> Self {
@@ -643,8 +643,8 @@ impl<'parser, INNER: Combinator<T, O>, T: BorrowParse, O: BorrowParse>
 pub struct Filter<P, T, O, F>
 where
     P: Combinator<T, O>,
-    T: BorrowParse,
-    O: BorrowParse,
+    T: Parsable,
+    O: Parsable,
     // The filter function accepts a reference to the parsed output and returns a bool.
     // We require it to work for any lifetime.
     F: for<'a> Fn(&T::Output<'a>) -> bool,
@@ -662,8 +662,8 @@ where
 impl<P, T, O, F> Combinator<T, O> for Filter<P, T, O, F>
 where
     P: Combinator<T, O>,
-    T: BorrowParse,
-    O: BorrowParse,
+    T: Parsable,
+    O: Parsable,
     F: for<'a> Fn(&T::Output<'a>) -> bool,
 {
     fn parse<'a>(
@@ -714,8 +714,8 @@ where
 impl<P, T, O, F> Filter<P, T, O, F>
 where
     P: Combinator<T, O>,
-    T: BorrowParse,
-    O: BorrowParse,
+    T: Parsable,
+    O: Parsable,
     F: for<'a> Fn(&T::Output<'a>) -> bool,
 {
     /// Creates a new Filter combinator with the given inner parser, filtering function, and error message.

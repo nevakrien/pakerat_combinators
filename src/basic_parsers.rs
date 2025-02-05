@@ -1,7 +1,7 @@
 use std::rc::Rc;
 use std::ops::Deref;
 use crate::cache::DynCache;
-use crate::combinator::BorrowParse;
+use crate::combinator::Parsable;
 use crate::combinator::Combinator;
 use crate::combinator::Pakerat;
 use crate::combinator::PakeratError;
@@ -135,7 +135,7 @@ pub fn streams_match<'a>(
 #[derive(Clone, Copy)]
 pub struct MatchParser<'b>(pub Input<'b>);
 
-impl<O: BorrowParse> Combinator<(), O> for MatchParser<'_> {
+impl<O: Parsable> Combinator<(), O> for MatchParser<'_> {
     fn parse<'a>(
         &self,
         input: Input<'a>,
@@ -157,7 +157,7 @@ macro_rules! define_parser {
         #[derive(Debug, Clone, Copy, PartialEq)]
         pub struct $name;
 
-        impl<O: BorrowParse> Combinator<$output, O> for $name {
+        impl<O: Parsable> Combinator<$output, O> for $name {
             #[inline]
             fn parse<'a>(
                 &self,
@@ -194,7 +194,7 @@ define_parser!(LifetimeParser, Lifetime, lifetime, "a lifetime");
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SpecificPunct(pub char);
 
-impl<O: BorrowParse> Combinator<Punct, O> for SpecificPunct {
+impl<O: Parsable> Combinator<Punct, O> for SpecificPunct {
     #[inline]
     fn parse<'a>(
         &self,
@@ -221,7 +221,7 @@ pub struct SpecificWord<STR: Deref<Target = str>=&'static str, QW=&'static str> 
     pub quoted_word: QW,
 }
 
-impl<O: BorrowParse> Combinator<Ident, O> for SpecificWord<&'static str, &'static str> {
+impl<O: Parsable> Combinator<Ident, O> for SpecificWord<&'static str, &'static str> {
     #[inline]
     fn parse<'a>(
         &self,
@@ -240,7 +240,7 @@ impl<O: BorrowParse> Combinator<Ident, O> for SpecificWord<&'static str, &'stati
     }
 }
 
-impl<STR: Deref<Target = str>,O: BorrowParse> Combinator<Ident, O> for SpecificWord<STR, Rc<str>> {
+impl<STR: Deref<Target = str>,O: Parsable> Combinator<Ident, O> for SpecificWord<STR, Rc<str>> {
     #[inline]
     fn parse<'a>(
         &self,
@@ -296,7 +296,7 @@ impl Parse for BasicInt {
     }
 }
 
-impl<O: BorrowParse> Combinator<i64, O> for IntParser {
+impl<O: Parsable> Combinator<i64, O> for IntParser {
     fn parse<'a>(
         &self,
         input: Input<'a>,
@@ -321,7 +321,7 @@ impl<O: BorrowParse> Combinator<i64, O> for IntParser {
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[repr(transparent)]
 pub struct DelParser(pub Delimiter);
-impl<O: BorrowParse> Combinator<Input<'_>, O> for DelParser {
+impl<O: Parsable> Combinator<Input<'_>, O> for DelParser {
     #[inline]
     fn parse<'a>(
         &self,
@@ -346,7 +346,7 @@ impl<O: BorrowParse> Combinator<Input<'_>, O> for DelParser {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct AnyDelParser;
 
-impl<O: BorrowParse> Combinator<Input<'_>, O> for AnyDelParser {
+impl<O: Parsable> Combinator<Input<'_>, O> for AnyDelParser {
     #[inline]
     fn parse<'a>(
         &self,

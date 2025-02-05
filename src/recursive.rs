@@ -1,5 +1,5 @@
 use crate::cache::DynCache;
-use crate::combinator::BorrowParse;
+use crate::combinator::Parsable;
 use crate::combinator::Combinator;
 use crate::combinator::Pakerat;
 use crate::core::Input;
@@ -10,6 +10,9 @@ use std::marker::PhantomData;
 ///
 /// `RecursiveParser` enables defining self-referential parsing rules in a safe manner.
 /// It uses `OnceCell` to lazily store and resolve the actual parser.
+///
+/// Note that the lifetime requirement can be a bit annoying, so using an arena allocator is a good idea.
+/// See [`typed-arena`](https://crates.io/crates/typed-arena) and [`erased-type-arena`](https://crates.io/crates/erased-type-arena).
 ///
 /// # Example
 /// ```rust
@@ -53,18 +56,18 @@ use std::marker::PhantomData;
 /// let (remaining, result) = parser.parse(input, &mut cache).unwrap();
 /// assert!(remaining.eof());
 /// ```
-pub struct RecursiveParser<'parser, T: BorrowParse, O: BorrowParse = T> {
-    cell: OnceCell<&'parser dyn Combinator<T, O>>,
-    _phantom: PhantomData<(T, O)>,
+pub struct RecursiveParser<'parser, T: Parsable, O: Parsable = T> {
+    pub cell: OnceCell<&'parser dyn Combinator<T, O>>,
+    pub _phantom: PhantomData<(T, O)>,
 }
 
-impl<T: BorrowParse, O: BorrowParse> Default for RecursiveParser<'_, T, O> {
+impl<T: Parsable, O: Parsable> Default for RecursiveParser<'_, T, O> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<'parser, T: BorrowParse, O: BorrowParse> RecursiveParser<'parser, T, O> {
+impl<'parser, T: Parsable, O: Parsable> RecursiveParser<'parser, T, O> {
     /// Creates a new recursive parser without an initial implementation.
     ///
     /// The parser must be initialized using [`set`] before use.
@@ -95,7 +98,7 @@ impl<'parser, T: BorrowParse, O: BorrowParse> RecursiveParser<'parser, T, O> {
     }
 }
 
-impl<T: BorrowParse, O: BorrowParse> Combinator<T, O> for RecursiveParser<'_, T, O> {
+impl<T: Parsable, O: Parsable> Combinator<T, O> for RecursiveParser<'_, T, O> {
     fn parse<'a>(
         &self,
         input: Input<'a>,
@@ -138,7 +141,7 @@ use crate::combinator::Combinator;
     /// int + num => add_num
     /// int => add_num
     #[test]
-    fn test_arithmetic_parsing() {
+    fn test_arithmetic_parsing_recursive() {
         let tokens = "3 + 4 * (2 + 5)".parse().unwrap();
         let buffer = TokenBuffer::new2(tokens);
         let input = Input::new(&buffer);

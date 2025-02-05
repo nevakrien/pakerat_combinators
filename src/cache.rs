@@ -16,7 +16,7 @@
 //! ## Example: Structured Caching with `one_of!`
 //!
 //! ```rust
-//! use pakerat_combinators::combinator::{BorrowParse,Combinator,CombinatorExt};
+//! use pakerat_combinators::combinator::{Parsable,Combinator,CombinatorExt};
 //! use pakerat_combinators::basic_parsers::{IdentParser, IntParser};
 //! use pakerat_combinators::{one_of};
 //! use pakerat_combinators::core::Input;
@@ -30,7 +30,7 @@
 //!     Number(i64),
 //! }
 //!
-//! impl BorrowParse for ParsedValue{
+//! impl Parsable for ParsedValue{
 //!    type Output<'a>= ParsedValue;//does not depend on input lifetime
 //! }
 //!
@@ -76,7 +76,7 @@
 //! assert!(matches!(cached_ident, ParsedValue::Ident(_)));
 //! ```
 
-use crate::combinator::BorrowParse;
+use crate::combinator::Parsable;
 use crate::combinator::Combinator;
 use crate::combinator::Pakerat;
 use crate::combinator::PakeratError;
@@ -165,25 +165,25 @@ impl<T: PartialEq> PartialEq for CacheStatus<T> {
 
 impl<T: Eq> Eq for CacheStatus<T> {}
 // #[derive(Default)]
-pub struct CacheEntry<'a, T: BorrowParse = ()>(
+pub struct CacheEntry<'a, T: Parsable = ()>(
     pub CacheStatus<Pakerat<(Input<'a>, T::Output<'a>)>>,
 );
 
-impl<T: BorrowParse> Default for CacheEntry<'_, T> {
+impl<T: Parsable> Default for CacheEntry<'_, T> {
     fn default() -> Self {
         CacheEntry(CacheStatus::default())
     }
 }
 
-impl<'a, T: BorrowParse> From<CacheStatus<Pakerat<(Input<'a>, T::Output<'a>)>>>
+impl<'a, T: Parsable> From<CacheStatus<Pakerat<(Input<'a>, T::Output<'a>)>>>
     for CacheEntry<'a, T>
 {
-    fn from(x: CacheStatus<Pakerat<(Input<'a>, <T as BorrowParse>::Output<'a>)>>) -> Self {
+    fn from(x: CacheStatus<Pakerat<(Input<'a>, <T as Parsable>::Output<'a>)>>) -> Self {
         Self(x)
     }
 }
 
-impl<'a, T: BorrowParse> From<CacheEntry<'a, T>>
+impl<'a, T: Parsable> From<CacheEntry<'a, T>>
     for CacheStatus<Pakerat<(Input<'a>, T::Output<'a>)>>
 {
     fn from(x: CacheEntry<'a, T>) -> Self {
@@ -191,7 +191,7 @@ impl<'a, T: BorrowParse> From<CacheEntry<'a, T>>
     }
 }
 
-impl<'a, T: BorrowParse> Clone for CacheEntry<'a, T>
+impl<'a, T: Parsable> Clone for CacheEntry<'a, T>
 where
     T::Output<'a>: Clone,
 {
@@ -202,7 +202,7 @@ where
 
 impl<'a, T> CacheEntry<'a, T>
 where
-    T: BorrowParse,
+    T: Parsable,
     T::Output<'a>: Clone,
 {
     ///this is used to finalize the result of a search
@@ -229,10 +229,10 @@ pub type ArrayCache<'a, const L: usize, T = ()> = FixedCollection<CacheEntry<'a,
 ///a cache that allways returns a value in get
 #[repr(transparent)]
 #[derive(Clone)]
-pub struct HashCache<'a, T: BorrowParse = ()>(pub HashMap<usize, CacheEntry<'a, T>>)
+pub struct HashCache<'a, T: Parsable = ()>(pub HashMap<usize, CacheEntry<'a, T>>)
 where
     T::Output<'a>: Clone;
-impl<'a, T: BorrowParse> Collection<CacheEntry<'a, T>> for HashCache<'a, T>
+impl<'a, T: Parsable> Collection<CacheEntry<'a, T>> for HashCache<'a, T>
 where
     T::Output<'a>: Clone,
 {
@@ -243,7 +243,7 @@ where
 }
 
 // Implement `Index` for immutable access
-impl<'a, T: BorrowParse> Index<usize> for HashCache<'a, T>
+impl<'a, T: Parsable> Index<usize> for HashCache<'a, T>
 where
     T::Output<'a>: Clone,
 {
@@ -253,7 +253,7 @@ where
         self.0.get(&key).unwrap_or(&CacheEntry(CacheStatus::Empty))
     }
 }
-impl<'a, T: BorrowParse> IndexMut<usize> for HashCache<'a, T>
+impl<'a, T: Parsable> IndexMut<usize> for HashCache<'a, T>
 where
     T::Output<'a>: Clone,
 {
@@ -262,7 +262,7 @@ where
     }
 }
 
-impl<'a, T: BorrowParse> Default for HashCache<'a, T>
+impl<'a, T: Parsable> Default for HashCache<'a, T>
 where
     T::Output<'a>: Clone,
 {
@@ -280,11 +280,11 @@ fn hash_cache() {
     ));
 }
 
-pub trait CacheSpot<'a, T: BorrowParse = ()>: Collection<CacheEntry<'a, T>> {
+pub trait CacheSpot<'a, T: Parsable = ()>: Collection<CacheEntry<'a, T>> {
     fn clear(&mut self);
 }
 
-impl<'a, const L: usize, T: BorrowParse> CacheSpot<'a, T> for ArrayCache<'a, L, T>
+impl<'a, const L: usize, T: Parsable> CacheSpot<'a, T> for ArrayCache<'a, L, T>
 where
     T::Output<'a>: Clone,
 {
@@ -295,7 +295,7 @@ where
     }
 }
 
-impl<'a, T: BorrowParse> CacheSpot<'a, T> for HashCache<'a, T>
+impl<'a, T: Parsable> CacheSpot<'a, T> for HashCache<'a, T>
 where
     T::Output<'a>: Clone,
 {
@@ -312,7 +312,7 @@ where
 /// In the worst case, the time complexity is O(inputs_len * parse_types).
 ///
 /// As a bonus, caching also prevents accidental infinite recursion.
-pub trait Cache<'a, T: BorrowParse = ()>
+pub trait Cache<'a, T: Parsable = ()>
 where
     T::Output<'a>: Clone,
 {
@@ -329,7 +329,7 @@ pub trait DynCache<'a, T = ()> {
     fn get_dyn_slot(&mut self, slot: usize) -> &mut dyn CacheSpot<'a, T>;
 }
 
-impl<'a, T: BorrowParse, C: Cache<'a, T>> DynCache<'a, T> for C
+impl<'a, T: Parsable, C: Cache<'a, T>> DynCache<'a, T> for C
 where
     T::Output<'a>: Clone,
 {
@@ -353,7 +353,7 @@ pub fn parse_cached<'a, T, P, FE>(
     recurse_err: FE,
 ) -> Pakerat<(Input<'a>, T::Output<'a>)>
 where
-    T: BorrowParse,
+    T: Parsable,
     for<'b> T::Output<'b>: Clone,
 
     P: Combinator<T, T> + ?Sized,
@@ -415,10 +415,10 @@ where
 // 	}
 // }
 
-impl<'a, T: BorrowParse, C> Cache<'a, T> for HashMap<usize, C>
+impl<'a, T: Parsable, C> Cache<'a, T> for HashMap<usize, C>
 where
     C: CacheSpot<'a, T> + Default,
-    <T as BorrowParse>::Output<'a>: Clone,
+    <T as Parsable>::Output<'a>: Clone,
 {
     type Item = C;
     fn get_slot(&mut self, slot: usize) -> &mut C {
@@ -464,7 +464,7 @@ pub type FlexibleCache<'a, T = ()> = HashMap<usize, HashCache<'a, T>>;
 pub struct CachedComb<INNER, T = ()>
 where
     INNER: Combinator<T, T>,
-    T: BorrowParse,
+    T: Parsable,
     for<'b> T::Output<'b>: Clone,
 {
     pub inner: INNER,
@@ -481,7 +481,7 @@ where
 impl<INNER, T> Combinator<T, T> for CachedComb<INNER, T>
 where
     INNER: Combinator<T, T>,
-    T: BorrowParse,
+    T: Parsable,
     for<'b> T::Output<'b>: Clone,
 {
     fn parse<'a>(
@@ -498,7 +498,7 @@ where
 impl<INNER, T> CachedComb<INNER, T>
 where
     INNER: Combinator<T, T>,
-    T: BorrowParse,
+    T: Parsable,
     for<'b> T::Output<'b>: Clone,
 {
     pub fn new(inner: INNER, key: usize, message: &'static str) -> Self {

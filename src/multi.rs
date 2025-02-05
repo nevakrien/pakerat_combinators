@@ -1,6 +1,6 @@
 use crate::combinator::CombinatorExt;
 use crate::cache::DynCache;
-use crate::combinator::BorrowParse;
+use crate::combinator::Parsable;
 use crate::combinator::PakeratError;
 use crate::combinator::{Combinator, Pakerat};
 use crate::core::Expected;
@@ -41,13 +41,13 @@ use std::marker::PhantomData;
 /// let (_, parsed_ident) = my_parser.parse(input, &mut cache).unwrap();
 /// assert_eq!(parsed_ident.to_string(), "my_var");
 /// ```
-pub struct Wrapped<INNER, WRAPPER, T: BorrowParse = (), O = T>
+pub struct Wrapped<INNER, WRAPPER, T: Parsable = (), O = T>
 where
     INNER: Combinator<T, O>,
     //'static resolves like Input<'_>
     WRAPPER: Combinator<Input<'static>, O>,
 
-    O: BorrowParse,
+    O: Parsable,
 {
     ///finds the start for the inside parser
     pub wrapper: WRAPPER,
@@ -61,8 +61,8 @@ impl<INNER, WRAPPER, T, O> Combinator<T, O> for Wrapped<INNER, WRAPPER, T, O>
 where
     WRAPPER: Combinator<Input<'static>, O>,
     INNER: Combinator<T, O>,
-    O: BorrowParse,
-    T: BorrowParse,
+    O: Parsable,
+    T: Parsable,
 {
     fn parse<'a>(
         &self,
@@ -105,8 +105,8 @@ impl<INNER, WRAPPER, T, O> Wrapped<INNER, WRAPPER, T, O>
 where
     WRAPPER: Combinator<Input<'static>, O>,
     INNER: Combinator<T, O>,
-    O: BorrowParse,
-    T: BorrowParse,
+    O: Parsable,
+    T: Parsable,
 {
     pub fn new(wrapper: WRAPPER, inner: INNER) -> Self {
         Self {
@@ -146,8 +146,8 @@ where
 pub struct Maybe<INNER, T = (), O = T>
 where
     INNER: Combinator<T, O>,
-    T: BorrowParse,
-    O: BorrowParse,
+    T: Parsable,
+    O: Parsable,
 {
     pub inner: INNER,
     /// Used so we can have generics
@@ -156,8 +156,8 @@ where
 
 impl<INNER, T, O> Combinator<Option<T>, O> for Maybe<INNER, T, O>
 where
-    O: BorrowParse,
-    T: BorrowParse,
+    O: Parsable,
+    T: Parsable,
     INNER: Combinator<T, O>,
 {
     fn parse<'a>(
@@ -192,8 +192,8 @@ where
 impl<INNER, T, O> Maybe<INNER, T, O>
 where
     INNER: Combinator<T, O>,
-    O: BorrowParse,
-    T: BorrowParse,
+    O: Parsable,
+    T: Parsable,
 {
     pub fn new(inner: INNER) -> Self {
         Maybe {
@@ -231,8 +231,8 @@ where
 pub struct Many0<INNER, T = (), O = T>
 where
     INNER: Combinator<T, O>,
-    O: BorrowParse,
-    T: BorrowParse,
+    O: Parsable,
+    T: Parsable,
 {
     pub inner: INNER,
     ///used so we can have generics
@@ -241,8 +241,8 @@ where
 
 impl<INNER, T, O> Combinator<Vec<T>, O> for Many0<INNER, T, O>
 where
-    O: BorrowParse,
-    T: BorrowParse,
+    O: Parsable,
+    T: Parsable,
     INNER: Combinator<T, O>,
 {
     fn parse<'a>(
@@ -290,8 +290,8 @@ where
 impl<INNER, T, O> Many0<INNER, T, O>
 where
     INNER: Combinator<T, O>,
-    O: BorrowParse,
-    T: BorrowParse,
+    O: Parsable,
+    T: Parsable,
 {
     pub fn new(inner: INNER) -> Self {
         Many0 {
@@ -329,8 +329,8 @@ where
 pub struct Many1<INNER, T = (), O = T>
 where
     INNER: Combinator<T, O>,
-    T: BorrowParse,
-    O: BorrowParse,
+    T: Parsable,
+    O: Parsable,
 {
     pub inner: INNER,
     ///used so we can have generics
@@ -339,8 +339,8 @@ where
 
 impl<INNER, T, O> Combinator<Vec<T>, O> for Many1<INNER, T, O>
 where
-    O: BorrowParse,
-    T: BorrowParse,
+    O: Parsable,
+    T: Parsable,
 
     INNER: Combinator<T, O>,
 {
@@ -391,8 +391,8 @@ where
 impl<INNER, T, O> Many1<INNER, T, O>
 where
     INNER: Combinator<T, O>,
-    T: BorrowParse,
-    O: BorrowParse,
+    T: Parsable,
+    O: Parsable,
 {
     pub fn new(inner: INNER) -> Self {
         Many1 {
@@ -428,8 +428,8 @@ where
 pub struct Ignore<INNER, T = (), O = T>
 where
     INNER: Combinator<T, O>,
-    O: BorrowParse,
-    T: BorrowParse,
+    O: Parsable,
+    T: Parsable,
 {
     pub inner: INNER,
     ///used so we can have generics
@@ -438,8 +438,8 @@ where
 
 impl<INNER, T, O> Combinator<(), O> for Ignore<INNER, T, O>
 where
-    O: BorrowParse,
-    T: BorrowParse,
+    O: Parsable,
+    T: Parsable,
 
     INNER: Combinator<T, O>,
 {
@@ -456,8 +456,8 @@ where
 impl<INNER, T, O> Ignore<INNER, T, O>
 where
     INNER: Combinator<T, O>,
-    T: BorrowParse,
-    O: BorrowParse,
+    T: Parsable,
+    O: Parsable,
 {
     pub fn new(inner: INNER) -> Self {
         Ignore {
@@ -514,8 +514,8 @@ where
 pub struct Recognize<INNER, T, O = T>
 where
     INNER: Combinator<T, O>,
-    O: BorrowParse,
-    T: BorrowParse,
+    O: Parsable,
+    T: Parsable,
 {
     pub inner: INNER,
     pub _phantom: PhantomData<(T, O)>,
@@ -524,8 +524,8 @@ where
 impl<INNER, T, O> Combinator<Input<'static>, O> for Recognize<INNER, T, O>
 where
     INNER: Combinator<T, O>,
-    O: BorrowParse,
-    T: BorrowParse,
+    O: Parsable,
+    T: Parsable,
 {
     fn parse<'a>(
         &self,
@@ -540,8 +540,8 @@ where
 impl<INNER, T, O> Recognize<INNER, T, O>
 where
     INNER: Combinator<T, O>,
-    O: BorrowParse,
-    T: BorrowParse,
+    O: Parsable,
+    T: Parsable,
 {
     pub fn new(inner: INNER) -> Self {
         Recognize {
@@ -592,9 +592,9 @@ where
 pub struct OrLast<A, B, T = (), O = T>
 where
     A: Combinator<T, O>,
-    T: BorrowParse,
+    T: Parsable,
     B: Combinator<T, O>,
-    O: BorrowParse,
+    O: Parsable,
 {
     ///first element
     pub a: A,
@@ -606,9 +606,9 @@ where
 impl<A, B, T, O> Combinator<T, O> for OrLast<A, B, T, O>
 where
     A: Combinator<T, O>,
-    T: BorrowParse,
+    T: Parsable,
     B: Combinator<T, O>,
-    O: BorrowParse,
+    O: Parsable,
 {
     fn parse<'a>(
         &self,
@@ -637,9 +637,9 @@ where
 impl<A, B, T, O> OrLast<A, B, T, O>
 where
     A: Combinator<T, O>,
-    T: BorrowParse,
+    T: Parsable,
     B: Combinator<T, O>,
-    O: BorrowParse,
+    O: Parsable,
 {
     pub fn new(a: A, b: B) -> Self {
         OrLast {
@@ -691,8 +691,8 @@ where
 pub struct ErrorWrapper<P, T = (), O = T>
 where
     P: Combinator<T, O>,
-    T: BorrowParse,
-    O: BorrowParse,
+    T: Parsable,
+    O: Parsable,
 {
     /// The internal parser to be wrapped.
     pub parser: P,
@@ -705,8 +705,8 @@ where
 impl<P, T, O> Combinator<T, O> for ErrorWrapper<P, T, O>
 where
     P: Combinator<T, O>,
-    T: BorrowParse,
-    O: BorrowParse,
+    T: Parsable,
+    O: Parsable,
 {
     fn parse<'a>(
         &self,
@@ -746,8 +746,8 @@ where
 impl<P, T, O> ErrorWrapper<P, T, O>
 where
     P: Combinator<T, O>,
-    T: BorrowParse,
-    O: BorrowParse,
+    T: Parsable,
+    O: Parsable,
 {
     pub fn new(parser: P, expected: &'static str) -> Self {
         ErrorWrapper {
@@ -934,9 +934,9 @@ macro_rules! __one_of_internal {
 pub struct OneOf<P, T = (), O = T>
 where
     P: Combinator<T, O>,
-    T: BorrowParse,
+    T: Parsable,
 
-    O: BorrowParse,
+    O: Parsable,
 {
     /// A list of parsers of the **same type**, stored in a boxed slice.
     pub alternatives: Box<[P]>,
@@ -949,8 +949,8 @@ where
 impl<P, T, O> Combinator<T, O> for OneOf<P, T, O>
 where
     P: Combinator<T, O>,
-    T: BorrowParse,
-    O: BorrowParse,
+    T: Parsable,
+    O: Parsable,
 {
     fn parse<'a>(
         &self,
@@ -996,8 +996,8 @@ where
 impl<Parser, T, O> OneOf<Parser, T, O>
 where
     Parser: Combinator<T, O>,
-    T: BorrowParse,
-    O: BorrowParse,
+    T: Parsable,
+    O: Parsable,
 {
     /// Creates a new `OneOf` parser.
     pub fn new(parsers: Box<[Parser]>, expected: &'static str) -> Self {
@@ -1049,10 +1049,10 @@ pub struct Pair<FIRST, SECOND, T1, T2, O>
 where
     FIRST: Combinator<T1, O>,
     SECOND: Combinator<T2, O>,
-    T1: BorrowParse,
-    T2: BorrowParse,
+    T1: Parsable,
+    T2: Parsable,
 
-    O: BorrowParse,
+    O: Parsable,
 {
     /// First parser to apply.
     pub first: FIRST,
@@ -1066,9 +1066,9 @@ impl<FIRST, SECOND, T1, T2, O> Combinator<(T1, T2), O> for Pair<FIRST, SECOND, T
 where
     FIRST: Combinator<T1, O>,
     SECOND: Combinator<T2, O>,
-    T1: BorrowParse,
-    T2: BorrowParse,
-    O: BorrowParse,
+    T1: Parsable,
+    T2: Parsable,
+    O: Parsable,
 {
     fn parse<'a>(
         &self,
@@ -1097,9 +1097,9 @@ impl<FIRST, SECOND, T1, T2, O> Pair<FIRST, SECOND, T1, T2, O>
 where
     FIRST: Combinator<T1, O>,
     SECOND: Combinator<T2, O>,
-    T1: BorrowParse,
-    T2: BorrowParse,
-    O: BorrowParse,
+    T1: Parsable,
+    T2: Parsable,
+    O: Parsable,
 {
     pub fn new(first: FIRST, second: SECOND) -> Self {
         Pair {
