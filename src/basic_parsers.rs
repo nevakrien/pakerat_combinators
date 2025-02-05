@@ -1,3 +1,4 @@
+use std::rc::Rc;
 use std::ops::Deref;
 use crate::cache::DynCache;
 use crate::combinator::BorrowParse;
@@ -196,16 +197,16 @@ define_parser!(LifetimeParser, Lifetime, lifetime, "a lifetime");
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SpecificPunct(pub char);
 
-impl<O: BorrowParse> Combinator<(), O> for SpecificPunct {
+impl<O: BorrowParse> Combinator<Punct, O> for SpecificPunct {
     #[inline]
     fn parse<'a>(
         &self,
         input: Input<'a>,
         _state: &mut dyn DynCache<'a, O>,
-    ) -> Pakerat<(Input<'a>, ())> {
+    ) -> Pakerat<(Input<'a>, Punct)> {
         if let Some((x, next)) = input.punct() {
             if x.as_char()==self.0{
-            	return Ok((next, ()));
+            	return Ok((next, x));
 
             }
         } 
@@ -216,46 +217,71 @@ impl<O: BorrowParse> Combinator<(), O> for SpecificPunct {
     }
 }
 
-/// Parses a specific word that can be stored as [`&'static str`], [`String`], or [`Arc<str>`].
-/// The error on this will allocate heap memory for "" if this is not needed see [`WordNoError`]
-pub struct SpecificWord<STR: Deref<Target = str>>(pub STR);
+/// Parses a specific word that can be stored as any string like object.
+/// This should usually be constructed with [`specific_word`]
+pub struct SpecificWord<STR: Deref<Target = str>=&'static str, QW=&'static str> {
+    pub word: STR,
+    pub quoted_word: QW,
+}
 
-impl<STR: Deref<Target = str>, O: BorrowParse> Combinator<(), O> for SpecificWord<STR> {
+impl<O: BorrowParse> Combinator<Ident, O> for SpecificWord<&'static str, &'static str> {
     #[inline]
     fn parse<'a>(
         &self,
         input: Input<'a>,
         _state: &mut dyn DynCache<'a, O>,
-    ) -> Pakerat<(Input<'a>, ())> {
+    ) -> Pakerat<(Input<'a>, Ident)> {
         if let Some((x, next)) = input.ident() {
-            if x == self.0.deref() {
-                return Ok((next, ()));
+            if x == self.word {
+                return Ok((next,x));
             }
-        } 
+        }
         Err(PakeratError::Regular(ParseError::Simple(Mismatch {
             actual: Found::start_of(input),
-            expected: Expected::OwnedText(format!("\"{}\"", self.0.deref()).into_boxed_str()),
+            expected: Expected::Text(self.quoted_word), // Uses &'static str
         })))
     }
 }
 
-/// Parses a specific word that can be stored as [`&'static str`], [`String`], or [`Arc<str>`].
-/// the error is returned as a [`ParseError::Empty`]
-pub struct WordNoError<STR: Deref<Target = str>>(pub STR);
-
-impl<STR: Deref<Target = str>, O: BorrowParse> Combinator<(), O> for WordNoError<STR> {
+impl<STR: Deref<Target = str>,O: BorrowParse> Combinator<Ident, O> for SpecificWord<STR, Rc<str>> {
     #[inline]
     fn parse<'a>(
         &self,
         input: Input<'a>,
         _state: &mut dyn DynCache<'a, O>,
-    ) -> Pakerat<(Input<'a>, ())> {
+    ) -> Pakerat<(Input<'a>, Ident)> {
         if let Some((x, next)) = input.ident() {
-            if x == self.0.deref() {
-                return Ok((next, ()));
+            if x == self.word.deref() {
+                return Ok((next, x));
             }
-        } 
-        Err(PakeratError::Regular(ParseError::Empty))
+        }
+        Err(PakeratError::Regular(ParseError::Simple(Mismatch {
+            actual: Found::start_of(input),
+            expected: Expected::OwnedText(self.quoted_word.clone()), // Uses Rc<str>
+        })))
+    }
+}
+
+///constructs [`SpecificWord`] from a string litreal
+#[macro_export]
+macro_rules! specific_word {
+    ($word:literal) => {
+        $crate::basic_parsers::SpecificWord {
+            word: $word,
+            quoted_word: concat!("\"", $word, "\""),
+        }
+    };
+}
+
+pub use specific_word;
+
+impl<STR: Deref<Target = str>> SpecificWord<STR, Rc<str>> {
+    pub fn new(word: STR) -> Self {
+        let quoted_word = format!("\"{}\"", word.deref()).into();
+        Self {
+            word,
+            quoted_word,
+        }
     }
 }
 
@@ -353,7 +379,7 @@ mod exact_match_tests {
     use crate::macros::token_cursor;
     #[test]
 	fn specific_word_exact_match() {
-	    let parser = SpecificWord("hello");
+	    let parser = SpecificWord::new("hello");
 	    let mut cache: BasicCache<0> = HashMap::new();
 
 	    token_cursor!(buffer, "hello");
@@ -362,6 +388,8 @@ mod exact_match_tests {
 	        remaining.eof(),
 	        "Expected to consume the entire input, but some tokens remain."
 	    );
+
+	    specific_word!("hello").parse(buffer, &mut cache).unwrap();
 	}
 
 

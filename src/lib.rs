@@ -7,6 +7,8 @@ pub mod combinator;
 pub mod core;
 pub mod multi;
 pub mod recursive;
+pub mod reporting;
+
 mod macros {
     #![allow(unused_macros, unused_imports)]
 

@@ -113,7 +113,7 @@ impl fmt::Display for Found {
 
 #[derive(Clone, Debug)]
 pub enum Expected {
-    OwnedText(Box<str>),
+    OwnedText(Rc<str>),
     Text(&'static str),
     Punct(char),
     Spot(Span),
@@ -177,7 +177,7 @@ pub enum ParseError {
     Empty,
     Simple(Mismatch),
     Message(Span, &'static str),
-    OwnedMessage(Span, Box<str>),
+    OwnedMessage(Span, Rc<str>),
     Syn(Rc<syn::Error>),
 }
 

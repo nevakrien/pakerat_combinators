@@ -771,6 +771,7 @@ macro_rules! one_of {
         }
     };
 }
+pub use one_of;
 
 /// This macro is used internally by `one_of!` to construct an `OrLast` chain.
 ///
