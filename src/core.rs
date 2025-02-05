@@ -110,8 +110,9 @@ impl fmt::Display for Found {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub enum Expected {
+    OwnedText(Box<str>),
     Text(&'static str),
     Punct(char),
     Spot(Span),
@@ -132,6 +133,7 @@ impl fmt::Display for Expected {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Expected::Text(s) => write!(f, "{}", s),
+            Expected::OwnedText(s) => write!(f, "{}", s),
             Expected::Spot(span) => match span.source_text() {
                 Some(s) => write!(f, "\"{}\"", s),
                 None => write!(f, "<missing source : {:?}>", span),
@@ -143,7 +145,7 @@ impl fmt::Display for Expected {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub struct Mismatch {
     pub actual: Found,
     pub expected: Expected,
@@ -174,6 +176,7 @@ pub enum ParseError {
     Empty,
     Simple(Mismatch),
     Message(Span, &'static str),
+    OwnedMessage(Span, Box<str>),
     Syn(syn::Error),
 }
 
@@ -184,6 +187,7 @@ impl Display for ParseError {
             Empty => write!(f, "<no debug info for this error>"),
             Simple(x) => x.fmt(f),
             ParseError::Message(_, message) => message.fmt(f),
+            ParseError::OwnedMessage(_, message) => message.fmt(f),
             ParseError::Syn(x) => x.fmt(f),
         }
     }
@@ -199,6 +203,7 @@ impl From<ParseError> for syn::Error {
             }
             ParseError::Simple(mismatch) => mismatch.into(), // Uses Mismatch's Into<syn::Error>
             ParseError::Message(span, message) => syn::Error::new(span, message),
+            ParseError::OwnedMessage(span, message) => syn::Error::new(span, message),
             ParseError::Syn(error) => error, // Already a syn::Error
         }
     }

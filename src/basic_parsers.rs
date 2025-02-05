@@ -1,3 +1,4 @@
+use std::ops::Deref;
 use crate::cache::DynCache;
 use crate::combinator::BorrowParse;
 use crate::combinator::Combinator;
@@ -215,6 +216,29 @@ impl<O: BorrowParse> Combinator<(), O> for SpecificPunct {
     }
 }
 
+/// Parses a specific word that can be stored as [`String`], [`&'static str`], or [`Arc<str>`]
+pub struct SpecificWord<STR: Deref<Target = str>>(pub STR);
+
+impl<STR: Deref<Target = str>, O: BorrowParse> Combinator<(), O> for SpecificWord<STR> {
+    #[inline]
+    fn parse<'a>(
+        &self,
+        input: Input<'a>,
+        _state: &mut dyn DynCache<'a, O>,
+    ) -> Pakerat<(Input<'a>, ())> {
+        if let Some((x, next)) = input.ident() {
+            if x == self.0.deref() {
+                return Ok((next, ()));
+            }
+        } 
+        Err(PakeratError::Regular(ParseError::Simple(Mismatch {
+            actual: Found::start_of(input),
+            expected: Expected::OwnedText(format!("\"{}\"", self.0.deref()).into_boxed_str()),
+        })))
+    }
+}
+
+
 ///parses an i64 using [`syn`]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct IntParser;
@@ -307,6 +331,19 @@ mod exact_match_tests {
     use syn::buffer::TokenBuffer;
 
     use crate::macros::token_cursor;
+    #[test]
+	fn specific_word_exact_match() {
+	    let parser = SpecificWord("hello");
+	    let mut cache: BasicCache<0> = HashMap::new();
+
+	    token_cursor!(buffer, "hello");
+	    let (remaining, _) = parser.parse(buffer, &mut cache).unwrap();
+	    assert!(
+	        remaining.eof(),
+	        "Expected to consume the entire input, but some tokens remain."
+	    );
+	}
+
 
     #[test]
     fn match_parser_exact_match_dumby_error() {
