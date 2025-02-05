@@ -1,3 +1,4 @@
+use crate::combinator::CombinatorExt;
 use crate::cache::DynCache;
 use crate::combinator::BorrowParse;
 use crate::combinator::PakeratError;
@@ -465,6 +466,91 @@ where
         }
     }
 }
+
+/// A parser that recognizes a portion of the input and returns it as an `Input`.
+///
+/// This is useful for separating recognition from validation. For example,
+/// you can extract a sequence of tokens and later process them separately,
+/// allowing detailed error collection.
+///
+/// See [`multi::Recognize`] for a combinator that applies this pattern to repeated parsing.
+///
+/// # Example Usage
+/// ```rust
+/// use pakerat_combinators::multi::{Recognize, Many0,Maybe,Pair};
+/// use pakerat_combinators::combinator::Combinator;
+/// use pakerat_combinators::basic_parsers::{SpecificPunct,IdentParser,AnyParser};
+/// use pakerat_combinators::core::Input;
+/// use pakerat_combinators::cache::{BasicCache,DynCache};
+/// use syn::buffer::TokenBuffer;
+///
+/// let tokens = "var1; var2 name ; *;".parse().unwrap();
+/// let buffer = TokenBuffer::new2(tokens);
+/// let input = Input::new(&buffer);
+///
+/// // contrived parser
+/// let parser = Many0::new(Recognize::new(Pair::new(Pair::new(AnyParser,Maybe::new(IdentParser)), SpecificPunct(';'))));
+///
+/// //check if the first token is a name
+/// fn is_valid<'a>(input:Input<'a>,cache: &mut dyn DynCache<'a>) -> bool{
+///     if let Ok(_) = IdentParser.parse(input,cache){
+///         true
+///     }
+///     else{
+///         false
+///     }
+///  }
+/// let mut cache = BasicCache::<0>::new();
+/// let (_cursor, recognized_inputs) = parser.parse(input, &mut cache).unwrap();
+///
+/// // Now, we can validate the recognized names separately.
+/// let invalid_names: Vec<_> = recognized_inputs
+///     .iter()
+///     .filter(|segment| !is_valid(**segment, &mut cache)) // Replace `is_valid_name` with actual validation logic
+///     .collect();
+///
+/// assert_eq!(invalid_names.len(), 1); // Only 1 statment started with punctioation
+/// ```
+pub struct Recognize<INNER, T, O = T>
+where
+    INNER: Combinator<T, O>,
+    O: BorrowParse,
+    T: BorrowParse,
+{
+    pub inner: INNER,
+    pub _phantom: PhantomData<(T, O)>,
+}
+
+impl<INNER, T, O> Combinator<Input<'static>, O> for Recognize<INNER, T, O>
+where
+    INNER: Combinator<T, O>,
+    O: BorrowParse,
+    T: BorrowParse,
+{
+    fn parse<'a>(
+        &self,
+        input: Input<'a>,
+        cache: &mut dyn DynCache<'a, O>,
+    ) -> Pakerat<(Input<'a>, Input<'a>)> {
+        let recognized = self.inner.parse_recognize(input, cache)?;
+        Ok(recognized)
+    }
+}
+
+impl<INNER, T, O> Recognize<INNER, T, O>
+where
+    INNER: Combinator<T, O>,
+    O: BorrowParse,
+    T: BorrowParse,
+{
+    pub fn new(inner: INNER) -> Self {
+        Recognize {
+            inner,
+            _phantom: PhantomData,
+        }
+    }
+}
+
 
 /// A combinator that tries `A` first, then falls back to `B` if `A` fails.
 ///

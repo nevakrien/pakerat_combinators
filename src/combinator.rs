@@ -498,12 +498,20 @@ pub trait CombinatorExt<T: BorrowParse = (), O: BorrowParse = T>: Combinator<T, 
     ///
     /// This is just syntax sugar around [`Filter`]
     fn filter<F>(self, filter_fn: F, expected: &'static str) -> Filter<Self, T, O, F>
-        where
-            F: for<'a> Fn(&T::Output<'a>) -> bool,
-            Self: Sized,
-        {
-            Filter::new(self, filter_fn, expected)
-        }
+    where
+        F: for<'a> Fn(&T::Output<'a>) -> bool,
+        Self: Sized,
+    {
+        Filter::new(self, filter_fn, expected)
+    }
+
+    /// Recognizes a portion of the input returning it as an Input.
+    ///
+    /// Useful for splitting parsing into distinct stages, by extracting segments with [`Many0`] see [`multi::Recognize`]
+    fn parse_recognize<'a>(&self,input:Input<'a>,cache: &mut dyn DynCache<'a,O>) -> Pakerat<(Input<'a>,Input<'a>)>{
+        let next = self.parse_ignore(input,cache)?;
+        Ok((next,input.truncate(next)))
+    }
 
 }
 
