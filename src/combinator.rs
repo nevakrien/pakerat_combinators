@@ -374,6 +374,24 @@ fn test_dyn_closure_combinator_error_mapping() {
     }
 }
 
+#[test]
+fn test_leak2_safety() {
+    use crate::basic_parsers::IdentParser;
+    // Create a leaked parser
+    let (leaked_parser, ptr): (RefParser<'_, IdentParser, proc_macro2::Ident, ()>, *mut IdentParser) = IdentParser.leak2();
+
+    // Ensure that the pointer is non-null
+    assert!(!ptr.is_null());
+
+    assert_eq!(ptr as *const _, leaked_parser.inner as *const _);
+
+    // SAFETY: We manually free the leaked memory.
+    unsafe {
+        drop(Box::from_raw(ptr));
+    }
+}
+
+
 /// Extension trait for [`Combinator`] holding useful syntax sugar
 /// see individual methods for more detail
 pub trait CombinatorExt<T: Parsable = (), O: Parsable = T>: Combinator<T, O> {
@@ -446,6 +464,25 @@ pub trait CombinatorExt<T: Parsable = (), O: Parsable = T>: Combinator<T, O> {
     /// returning a *mut pointer to it for freeing later
     ///
     /// This is similar to [`leak`](CombinatorExt::leak)
+    /// # Example
+    /// ```rust
+    /// use pakerat_combinators::combinator::{Combinator, CombinatorExt, RefParser};
+    /// use pakerat_combinators::basic_parsers::IdentParser;
+    /// use pakerat_combinators::multi::Ignore;
+    /// use std::ptr;
+    ///
+    /// // Function that constructs and returns a leaked parser and its pointer.
+    /// fn create_parser() -> (&'static dyn Combinator<(), ()>, *mut dyn Combinator<(), ()>,) {
+    ///     let (leaked_parser, ptr) = Ignore::new(IdentParser).leak2();
+    ///     (leaked_parser.inner, ptr)
+    /// }
+    ///
+    /// let (parser, ptr) = create_parser();
+    /// // SAFETY: Manually free the leaked memory when done
+    /// unsafe {
+    ///     drop(Box::from_raw(ptr));
+    /// }
+    /// ```
     fn leak2(self) -> (RefParser<'static, Self, T, O>,*mut Self) where Self: Sized{
         let r = Box::leak(Box::new(self));
         let ptr = r as *mut _;
