@@ -255,7 +255,8 @@ impl<T: Parsable, O: Parsable> Combinator<T, O> for OwnedRecursiveParser<T, O> {
 
 #[cfg(test)]
 mod tests {
-    use crate::basic_parsers::DelParser;
+    use crate::one_of_last;
+use crate::basic_parsers::DelParser;
 use proc_macro2::Delimiter;
 use crate::combinator::CombinatorExt;
 use crate::combinator::Combinator;
@@ -263,7 +264,7 @@ use crate::combinator::Combinator;
     use crate::core::Input;
     use crate::cache::{CachedComb, BasicCache};
     use crate::multi::{Pair, Wrapped};
-    use crate::one_of;
+    
     use crate::recursive::RecursiveParser;
     use syn::buffer::TokenBuffer;
 
@@ -289,7 +290,7 @@ use crate::combinator::Combinator;
 
         //add num
         let add_num_parser_holder = CachedComb::new(
-            one_of!("a number",
+            one_of_last!(
                 //int + num => add_num
                 Pair::new(IntParser, Pair::new(SpecificPunct('+'), expr_parser.as_ref()))
                     .map(|(lhs, (_, rhs))| lhs + rhs),
@@ -302,7 +303,7 @@ use crate::combinator::Combinator;
         add_num_parser.set(&add_num_parser_holder);
         
         //expr
-        let expr_parser_holder = CachedComb::new(one_of!("a number",
+        let expr_parser_holder = CachedComb::new(one_of_last!(
             //(num) => num
             Wrapped::new(
                 DelParser(Delimiter::Parenthesis)
