@@ -4,6 +4,8 @@ use crate::combinator::{Combinator, Parsable, Pakerat, PakeratError};
 use crate::core::{Input, Expected, Found, Mismatch, ParseError};
 use crate::cache::DynCache;
 
+/// Catches the error of another parser.
+///
 /// This combinator is meant for diagnostic purposes: when used, it catches a non-recursive error from the inner parser
 /// (if one occurs) and returns it as a successful result: reporting what the error would have been without consuming any input.
 /// Conversely, if the inner parser succeeds, it returns a failure (`ParseError::Empty`).
@@ -87,6 +89,8 @@ where
     }
 }
 
+/// Catches the error of another parser (including recursive ones).
+///
 /// This combinator is meant for diagnostic purposes: when used, it catches errors from its inner parser—both
 /// non‑recursive and recursive—returning them as a successful result that reports what the error would have been
 /// without consuming any input. Conversely, if the inner parser succeeds (i.e. produces no error), it returns a
