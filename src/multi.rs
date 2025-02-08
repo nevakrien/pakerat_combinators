@@ -1131,16 +1131,17 @@ where
         input: Input<'a>,
         cache: &mut dyn DynCache<'a, O>,
     ) -> Pakerat<(Input<'a>, T::Output<'a>)> {
-        let mut last_err = Err(PakeratError::Regular(ParseError::Empty));
+        let mut last_err = Err(PakeratError::Regular(ParseError::Empty)); // TCO-friendly
 
         for alt in &*self.alternatives {
             match alt.parse(input, cache) {
                 Ok(ok) => return Ok(ok),
-                Err(err) => last_err = Err(err), // Store last encountered error
+                Err(PakeratError::Recursive(e)) => return Err(PakeratError::Recursive(e)), // Escalate recursion
+                Err(err) => last_err = Err(err), // Store last error
             }
         }
 
-        last_err // Return the last error
+        last_err // Return last error encountered
     }
 
     fn parse_ignore<'a>(
@@ -1148,16 +1149,17 @@ where
         input: Input<'a>,
         cache: &mut dyn DynCache<'a, O>,
     ) -> Pakerat<Input<'a>> {
-        let mut last_err = Err(PakeratError::Regular(ParseError::Empty));
+        let mut last_err = Err(PakeratError::Regular(ParseError::Empty)); // TCO-friendly
 
         for alt in &*self.alternatives {
             match alt.parse_ignore(input, cache) {
                 Ok(ok) => return Ok(ok),
-                Err(err) => last_err = Err(err), // Store last encountered error
+                Err(PakeratError::Recursive(e)) => return Err(PakeratError::Recursive(e)), // Escalate recursion
+                Err(err) => last_err = Err(err), // Store last error
             }
         }
 
-        last_err // Return the last error
+        last_err // Return last error encountered
     }
 }
 
@@ -1169,16 +1171,13 @@ where
 {
     /// Creates a new `OneOfLast` parser.
     pub fn new(parsers: Box<[P]>) -> Self {
-        assert!(
-            !parsers.is_empty(),
-            "OneOfLast must contain at least one parser"
-        );
         OneOfLast {
             alternatives: parsers,
             _phantom: PhantomData,
         }
     }
 }
+
 
 
 /// A `Pair` combinator that applies two parsers sequentially.
