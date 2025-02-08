@@ -12,6 +12,8 @@ use crate::cache::DynCache;
 /// discarding the original error.  
 /// Recursive errors from the inner parser are escalated as-is.
 ///
+/// Note that this parser does not consume any input.
+///
 /// # Example
 /// ```rust
 /// use pakerat_combinators::combinator::Combinator;
@@ -65,8 +67,8 @@ where
         cache: &mut dyn DynCache<'a, O>,
     ) -> Pakerat<(Input<'a>, ParseError)> {
         match self.inner.parse_recognize(input, cache) {
-            Ok((next, _)) => Ok((next, ParseError::Empty)),
-            Err(PakeratError::Regular(_)) => Err(PakeratError::Regular(ParseError::Empty)),
+            Ok(_) => Err(PakeratError::Regular(ParseError::Empty)),
+            Err(PakeratError::Regular(e)) => Ok((input,e)),
             Err(PakeratError::Recursive(e)) => Err(PakeratError::Recursive(e)),
         }
     }
