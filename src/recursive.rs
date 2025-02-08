@@ -126,15 +126,16 @@ impl<T: Parsable, O: Parsable> Combinator<T, O> for RecursiveParser<'_, T, O> {
 /// This can be achieved by using [`RcParser`] and [`WeakParser`].
 ///
 /// **Note:** For most applications, it is generally recommended to use the regular recursive
-/// parser with [`leak`](crate::combinator::CombinatorExt::leak) since most applications need only
-/// parsers that are static. This struct is only useful if you need the internal parser to eventually be dropped.
+/// parser with [`leak`] since most applications need only parsers that are static.
+/// This struct is only useful if you need the internal parser to eventually be dropped.
 /// Be careful to avoid cycles in your recursive definitions:
 /// hold only one recursive strong [`RcParser`] and use its [`weak`] method when
-/// passing it around.
+/// passing it around recursively.
 ///
 /// [`RcParser`]: crate::combinator::RcParser
 /// [`WeakParser`]: crate::combinator::WeakParser
 /// [`weak`]: crate::combinator::RcParser::weak
+/// [`leak`]: crate::combinator::CombinatorExt::leak
 ///
 /// # Example
 ///
