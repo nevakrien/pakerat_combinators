@@ -593,12 +593,11 @@ pub trait CombinatorExt<T: Parsable = (), O: Parsable = T>: Combinator<T, O> {
     
     /// Runs this parser, returning the consumed tokens as an [`Input`] as well as the rest of the stream.
     ///
-    /// This is useful for splitting parsing into distinct stages by extracting segments with [`Many0`].
-    /// You can then pass the recognized input to another parser for further processing.
+    /// This is useful for splitting parsing into distinct stages.
+    /// The recognized input can then be passed to another parser for further processing.
     ///
-    /// See [`Recognize`] for an example use.
+    /// See [`Recognize`] for an example of how to integrate this into a workflow.
     ///
-    /// [`Many0`]: crate::multi::Many0
     /// [`Recognize`]: crate::multi::Recognize
     ///
     /// # Example
