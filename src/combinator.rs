@@ -102,7 +102,7 @@ impl Parsable for Input<'_> {
     type Output<'a> = Input<'a>;
 }
 
-macro_rules! impl_borrow_parse {
+macro_rules! impl_parsble {
     ($($t:ty),*) => {
         $(impl $crate::combinator::Parsable for $t {
             type Output<'a> = $t;
@@ -111,7 +111,7 @@ macro_rules! impl_borrow_parse {
 }
 
 // Implement `Parsable` for common types
-impl_borrow_parse!(
+impl_parsble!(
     (),
     u8,
     u16,
@@ -129,10 +129,17 @@ impl_borrow_parse!(
     bool,
     String
 );
-impl_borrow_parse!(Ident, Punct, Literal, TokenTree, Group, Delimiter, Span, Lifetime);
+impl_parsble!(Ident, Punct, Literal, TokenTree, Group, Delimiter, Span, Lifetime);
+
+impl<E:Error+Clone+Parsable> Parsable for PakeratError<E>{
+
+type Output<'a> = E::Output<'a>;
+}
+
+
 
 // Macro to implement Parsable for generic containers
-macro_rules! impl_borrow_parse_for_container {
+macro_rules! impl_parsble_for_container {
     ($container:ident <T> $(, $extra:ty)?) => {
         impl<T: Parsable $(+ $extra)?> Parsable for $container<T> {
             type Output<'a> = $container<T::Output<'a>>;
@@ -140,13 +147,14 @@ macro_rules! impl_borrow_parse_for_container {
     };
 
 }
-impl_borrow_parse_for_container!(Vec<T>);
-impl_borrow_parse_for_container!(Option<T>);
-impl_borrow_parse_for_container!(Box<T>);
-impl_borrow_parse_for_container!(Rc<T>);
-impl_borrow_parse_for_container!(Arc<T>);
+impl_parsble_for_container!(Vec<T>);
+impl_parsble_for_container!(Option<T>);
+impl_parsble_for_container!(Box<T>);
+impl_parsble_for_container!(Rc<T>);
+impl_parsble_for_container!(Arc<T>);
 
-macro_rules! impl_borrow_parse_for_array_container {
+
+macro_rules! impl_parsble_for_array_container {
     ($container:ident <[T]> $(, $extra:ty)?) => {
         impl<T: Parsable $(+ $extra)?> Parsable for $container<[T]> {
             type Output<'a> = $container<T::Output<'a>>;
@@ -154,15 +162,15 @@ macro_rules! impl_borrow_parse_for_array_container {
     };
 
 }
-impl_borrow_parse_for_array_container!(Box<[T]>);
-impl_borrow_parse_for_array_container!(Rc<[T]>);
-impl_borrow_parse_for_array_container!(Arc<[T]>);
+impl_parsble_for_array_container!(Box<[T]>);
+impl_parsble_for_array_container!(Rc<[T]>);
+impl_parsble_for_array_container!(Arc<[T]>);
 
 impl<V: Parsable, E: Parsable> Parsable for Result<V, E> {
     type Output<'a> = Result<V::Output<'a>, E::Output<'a>>;
 }
 
-macro_rules! impl_borrow_parse_for_tuples {
+macro_rules! impl_parsble_for_tuples {
     ($( $T:ident ),*) => {
         impl<$( $T: Parsable ),*> Parsable for ($( $T, )*) {
             type Output<'a> = ($( $T::Output<'a>, )*);
@@ -171,13 +179,13 @@ macro_rules! impl_borrow_parse_for_tuples {
 }
 
 // Implement for common tuple sizes
-impl_borrow_parse_for_tuples!(T1, T2);
-impl_borrow_parse_for_tuples!(T1, T2, T3);
-impl_borrow_parse_for_tuples!(T1, T2, T3, T4);
-impl_borrow_parse_for_tuples!(T1, T2, T3, T4, T5);
-impl_borrow_parse_for_tuples!(T1, T2, T3, T4, T5, T6);
-impl_borrow_parse_for_tuples!(T1, T2, T3, T4, T5, T6, T7);
-impl_borrow_parse_for_tuples!(T1, T2, T3, T4, T5, T6, T7, T8);
+impl_parsble_for_tuples!(T1, T2);
+impl_parsble_for_tuples!(T1, T2, T3);
+impl_parsble_for_tuples!(T1, T2, T3, T4);
+impl_parsble_for_tuples!(T1, T2, T3, T4, T5);
+impl_parsble_for_tuples!(T1, T2, T3, T4, T5, T6);
+impl_parsble_for_tuples!(T1, T2, T3, T4, T5, T6, T7);
+impl_parsble_for_tuples!(T1, T2, T3, T4, T5, T6, T7, T8);
 //if you somehow for some reason need more than 8 something is defintly goe very very wrong
 
 /// A `Combinator` is a fundamental parser used throughout this crate.

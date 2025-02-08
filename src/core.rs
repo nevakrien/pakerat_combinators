@@ -181,6 +181,11 @@ pub enum ParseError {
     Syn(Rc<syn::Error>),
 }
 
+impl crate::combinator::Parsable for ParseError{
+
+type Output<'a> = ParseError;
+}
+
 impl Display for ParseError {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), std::fmt::Error> {
         use ParseError::*;
