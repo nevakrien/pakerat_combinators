@@ -590,14 +590,43 @@ pub trait CombinatorExt<T: Parsable = (), O: Parsable = T>: Combinator<T, O> {
         Ok((input, t.into()))
     }
 
-
-    /// Recognizes a portion of the input returning it as an Input.
+    
+    /// Runs this parser, returning the consumed tokens as an [`Input`] as well as the rest of the stream.
     ///
-    /// Useful for splitting parsing into distinct stages, by extracting segments with [`Many0`].
+    /// This is useful for splitting parsing into distinct stages by extracting segments with [`Many0`].
+    /// You can then pass the recognized input to another parser for further processing.
+    ///
     /// See [`Recognize`] for an example use.
     ///
     /// [`Many0`]: crate::multi::Many0
     /// [`Recognize`]: crate::multi::Recognize
+    ///
+    /// # Example
+    /// ```rust
+    /// use pakerat_combinators::combinator::{Combinator, CombinatorExt};
+    /// use pakerat_combinators::multi::Pair;
+    /// use pakerat_combinators::basic_parsers::{IdentParser, AnyParser};
+    /// use pakerat_combinators::core::Input;
+    /// use pakerat_combinators::cache::BasicCache;
+    /// use syn::buffer::TokenBuffer;
+    ///
+    /// // Example input
+    /// let tokens = "some_token another_token".parse().unwrap();
+    /// let buffer = TokenBuffer::new2(tokens);
+    /// let input = Input::new(&buffer);
+    ///
+    /// let pair_parser = Pair::new(AnyParser, IdentParser);
+    ///
+    /// // First, recognize and extract the input segment.
+    /// let mut cache = BasicCache::<0>::new();
+    /// let (remaining, recognized) = pair_parser.parse_recognize(input, &mut cache).unwrap();
+    ///
+    /// // Now, apply `IdentParser` to the recognized input.
+    /// let (_, ident) = IdentParser.parse(recognized, &mut cache).unwrap();
+    ///
+    /// // Ensure the second parser matched an identifier.
+    /// assert_eq!(ident.to_string(), "some_token");
+    /// ```
     fn parse_recognize<'a>(&self,input:Input<'a>,cache: &mut dyn DynCache<'a,O>) -> Pakerat<(Input<'a>,Input<'a>)>{
         let next = self.parse_ignore(input,cache)?;
         Ok((next,input.truncate(next)))
