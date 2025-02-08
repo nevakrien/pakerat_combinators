@@ -1131,16 +1131,16 @@ where
         input: Input<'a>,
         cache: &mut dyn DynCache<'a, O>,
     ) -> Pakerat<(Input<'a>, T::Output<'a>)> {
-        let mut last_err = None;
+        let mut last_err = Err(PakeratError::Regular(ParseError::Empty));
 
         for alt in &*self.alternatives {
             match alt.parse(input, cache) {
                 Ok(ok) => return Ok(ok),
-                Err(err) => last_err = Some(err), // Store last encountered error
+                Err(err) => last_err = Err(err), // Store last encountered error
             }
         }
 
-        Err(last_err.expect("OneOfLast must contain at least one parser")) // Return the last error
+        last_err // Return the last error
     }
 
     fn parse_ignore<'a>(
@@ -1148,16 +1148,16 @@ where
         input: Input<'a>,
         cache: &mut dyn DynCache<'a, O>,
     ) -> Pakerat<Input<'a>> {
-        let mut last_err = None;
+        let mut last_err = Err(PakeratError::Regular(ParseError::Empty));
 
         for alt in &*self.alternatives {
             match alt.parse_ignore(input, cache) {
                 Ok(ok) => return Ok(ok),
-                Err(err) => last_err = Some(err), // Store last encountered error
+                Err(err) => last_err = Err(err), // Store last encountered error
             }
         }
 
-        Err(last_err.expect("OneOfLast must contain at least one parser")) // Return the last error
+        last_err // Return the last error
     }
 }
 
