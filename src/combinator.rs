@@ -598,13 +598,13 @@ pub trait CombinatorExt<T: Parsable = (), O: Parsable = T>: Combinator<T, O> {
     ///
     /// [`Many0`]: crate::multi::Many0
     /// [`Recognize`]: crate::multi::Recognize
-
     fn parse_recognize<'a>(&self,input:Input<'a>,cache: &mut dyn DynCache<'a,O>) -> Pakerat<(Input<'a>,Input<'a>)>{
         let next = self.parse_ignore(input,cache)?;
         Ok((next,input.truncate(next)))
     }
 
     /// Wraps the parser in an [`RcParser`], giving it a static‑like lifetime.
+    #[allow(clippy::wrong_self_convention)]
     fn as_rc(self) -> RcParser<T, O,Self>
     where
         Self: Sized,
@@ -663,11 +663,10 @@ pub struct RefParser<'parser, INNER: Combinator<T, O>, T: Parsable, O: Parsable>
     pub _phantom: PhantomData<(T, O)>,
 }
 
-impl<'parser, INNER: Combinator<T, O>, T: Parsable, O: Parsable> Clone for RefParser<'parser, INNER, T, O>{
-
-fn clone(&self) -> Self { Self{inner:self.inner,_phantom:PhantomData} }
+impl<INNER: Combinator<T, O>, T: Parsable, O: Parsable> Clone for RefParser<'_, INNER, T, O>{
+fn clone(&self) -> Self { *self }
 }
-impl<'parser, INNER: Combinator<T, O>, T: Parsable, O: Parsable> Copy for RefParser<'parser, INNER, T, O>{}
+impl<INNER: Combinator<T, O>, T: Parsable, O: Parsable> Copy for RefParser<'_, INNER, T, O>{}
 
 impl<T: Parsable, O: Parsable, INNER: Combinator<T, O>> Combinator<T, O>
     for RefParser<'_, INNER, T, O>

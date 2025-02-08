@@ -205,7 +205,7 @@ impl From<ParseError> for syn::Error {
             ParseError::Simple(mismatch) => mismatch.into(), // Uses Mismatch's Into<syn::Error>
             ParseError::Message(span, message) => syn::Error::new(span, message),
             ParseError::OwnedMessage(span, message) => syn::Error::new(span, message),
-            ParseError::Syn(rc) => (&*rc).clone(), // Already a syn::Error
+            ParseError::Syn(rc) => (*rc).clone(), // Already a syn::Error
         }
     }
 }

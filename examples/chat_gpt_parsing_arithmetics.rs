@@ -40,9 +40,9 @@ enum TerminalType {
     Ident = 0,
     Number,
 }
-impl Into<usize> for TerminalType {
-    fn into(self) -> usize {
-        self as usize
+impl From<TerminalType> for usize {
+    fn from(val: TerminalType) -> Self {
+        val as usize
     }
 }
 
