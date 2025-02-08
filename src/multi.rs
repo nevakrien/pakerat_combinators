@@ -1282,6 +1282,195 @@ where
 }
 
 
+/// A `Sequence` combinator that applies multiple parsers sequentially.
+///
+/// All parsers must be of the same type. For example, you can store them as  
+/// `Box<dyn Combinator<T, O>>` so that they share a common type.  
+///
+/// This version uses `[P; N]` (a statically sized array) and returns `[T; N]`.  
+/// If the number of parsers is unknown at compile time, see [`BoxedSequence`].  
+/// For differing parser types, consider using [`Pair`].
+///
+/// # Example
+///
+/// ```rust
+/// use syn::buffer::TokenBuffer;
+/// use pakerat_combinators::{
+///     basic_parsers::{IdentParser, IntParser},
+///     combinator::Combinator,
+///     core::Input,
+///     multi::{Sequence,Ignore},
+///     cache::BasicCache,
+/// };
+/// 
+/// // To mix different parsers, store them as Box<dyn Combinator<_, _>>:
+/// let parsers: [Box<dyn Combinator<_, ()>>; 2] = [
+///     Box::new(Ignore::new(IdentParser)),
+///     Box::new(Ignore::new(IntParser)),
+/// ];
+/// 
+/// let sequence = Sequence::new(parsers);
+/// 
+/// let tokens = "var 42".parse().unwrap();
+/// let buffer = TokenBuffer::new2(tokens);
+/// let input = Input::new(&buffer);
+/// let mut cache = BasicCache::<0>::new();
+/// 
+/// let (_remaining, [_, _]) = sequence.parse(input, &mut cache).unwrap();
+/// ```
+pub struct Sequence<P, const N: usize, T = (), O = T>
+where
+    P: Combinator<T, O>,
+    T: Parsable,
+    O: Parsable,
+{
+    pub parsers: [P; N],
+    pub _phantom: PhantomData<(T, O)>,
+}
+
+impl<P, const N: usize, T, O> Combinator<[T; N], O> for Sequence<P, N, T, O>
+where
+    P: Combinator<T, O>,
+    T: Parsable,
+    O: Parsable,
+{
+    fn parse<'a>(
+        &self,
+        mut input: Input<'a>,
+        cache: &mut dyn DynCache<'a, O>,
+    ) -> Pakerat<(Input<'a>, [T::Output<'a>; N])> {
+        let mut results = std::array::from_fn(|_| None);
+
+        for (i, parser) in self.parsers.iter().enumerate() {
+            let (next, result) = parser.parse(input, cache)?;
+            input = next;
+            results[i] = Some(result);
+        }
+
+        let results = results.map(|opt| opt.unwrap());
+        Ok((input, results))
+    }
+
+    fn parse_ignore<'a>(
+        &self,
+        mut input: Input<'a>,
+        cache: &mut dyn DynCache<'a, O>,
+    ) -> Pakerat<Input<'a>> {
+        for parser in &self.parsers {
+            input = parser.parse_ignore(input, cache)?;
+        }
+        Ok(input)
+    }
+}
+
+impl<P, const N: usize, T, O> Sequence<P, N, T, O>
+where
+    P: Combinator<T, O>,
+    T: Parsable,
+    O: Parsable,
+{
+    pub fn new(parsers: [P; N]) -> Self {
+        Sequence {
+            parsers,
+            _phantom: PhantomData,
+        }
+    }
+}
+
+/// A `BoxedSequence` combinator that applies multiple parsers sequentially.
+///
+/// All parsers must be of the same type. Storing them as  
+/// `Box<dyn Combinator<T, O>>` is a common solution.  
+///
+/// Unlike [`Sequence`], this version uses a `Box<[P]>`, allowing a variable number of parsers, and returns a `Box<[T]>`.
+/// If the number of parsers is known at compile time, [`Sequence`] is more efficient.
+/// For differing parser types, consider using [`Pair`].
+///
+/// # Example
+///
+/// ```rust
+/// use syn::buffer::TokenBuffer;
+/// use pakerat_combinators::{
+///     basic_parsers::{IdentParser, IntParser},
+///     combinator::Combinator,
+///     core::Input,
+///     multi::{BoxedSequence,Ignore},
+///     cache::BasicCache,
+/// };
+/// 
+/// // Store your parsers as Box<dyn Combinator<_, _>> to satisfy the uniform type requirement:
+/// let parsers: Box<[Box<dyn Combinator<_, ()>>]> = vec![
+///     Box::new(Ignore::<_,_,()>::new(IdentParser)) as Box<dyn Combinator<_, ()>>,
+///     Box::new(Ignore::<_,_,()>::new(IntParser)) as Box<dyn Combinator<_, ()>>,
+/// ].into_boxed_slice();
+/// 
+/// let sequence_dyn = BoxedSequence::new(parsers);
+/// 
+/// let tokens = "var 42".parse().unwrap();
+/// let buffer = TokenBuffer::new2(tokens);
+/// let input = Input::new(&buffer);
+/// let mut cache = BasicCache::<0>::new();
+/// 
+/// let (_remaining, parsed_values) = sequence_dyn.parse(input, &mut cache).unwrap();
+/// assert_eq!(parsed_values.len(), 2);
+/// ```
+pub struct BoxedSequence<P, T = (), O = T>
+where
+    P: Combinator<T, O>,
+    T: Parsable,
+    O: Parsable,
+{
+    pub parsers: Box<[P]>,
+    pub _phantom: PhantomData<(T, O)>,
+}
+
+impl<P, T, O> Combinator<Box<[T]>, O> for BoxedSequence<P, T, O>
+where
+    P: Combinator<T, O>,
+    T: Parsable,
+    O: Parsable,
+{
+    fn parse<'a>(
+        &self,
+        mut input: Input<'a>,
+        cache: &mut dyn DynCache<'a, O>,
+    ) -> Pakerat<(Input<'a>, Box<[T::Output<'a>]>)> {
+        let mut results = Vec::with_capacity(self.parsers.len());
+
+        for parser in &*self.parsers {
+            let (next, result) = parser.parse(input, cache)?;
+            input = next;
+            results.push(result);
+        }
+
+        Ok((input, results.into_boxed_slice()))
+    }
+
+    fn parse_ignore<'a>(
+        &self,
+        mut input: Input<'a>,
+        cache: &mut dyn DynCache<'a, O>,
+    ) -> Pakerat<Input<'a>> {
+        for parser in &*self.parsers {
+            input = parser.parse_ignore(input, cache)?;
+        }
+        Ok(input)
+    }
+}
+
+impl<P, T, O> BoxedSequence<P, T, O>
+where
+    P: Combinator<T, O>,
+    T: Parsable,
+    O: Parsable,
+{
+    pub fn new(parsers: Box<[P]>) -> Self {
+        BoxedSequence {
+            parsers,
+            _phantom: PhantomData,
+        }
+    }
+}
 
 
 #[cfg(test)]

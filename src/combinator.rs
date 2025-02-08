@@ -153,11 +153,15 @@ impl_parsble_for_container!(Box<T>);
 impl_parsble_for_container!(Rc<T>);
 impl_parsble_for_container!(Arc<T>);
 
+impl<T:Parsable,const N:usize> Parsable for [T;N]{
+
+type Output<'a> = [T::Output<'a>;N];
+}
 
 macro_rules! impl_parsble_for_array_container {
     ($container:ident <[T]> $(, $extra:ty)?) => {
         impl<T: Parsable $(+ $extra)?> Parsable for $container<[T]> {
-            type Output<'a> = $container<T::Output<'a>>;
+            type Output<'a> = $container<[T::Output<'a>]>;
         }
     };
 
