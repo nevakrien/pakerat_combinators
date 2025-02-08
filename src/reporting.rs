@@ -4,16 +4,16 @@ use crate::combinator::{Combinator, Parsable, Pakerat, PakeratError};
 use crate::core::{Input, Expected, Found, Mismatch, ParseError};
 use crate::cache::DynCache;
 
-
-/// A parser that reports an error when the inner parser succeeds.
+/// This combinator is meant for diagnostic purposes: when used, it catches a non-recursive error from the inner parser
+/// (if one occurs) and returns it as a successful result: reporting what the error would have been without consuming any input.
+/// Conversely, if the inner parser succeeds, it returns a failure (`ParseError::Empty`).
 ///
-/// If the inner parser finds a match, this parser returns an error (`Err(PakeratError::Regular(ParseError::Empty))`),
-/// indicating that an unexpected match occurred.  
-/// If the inner parser fails regularly, this parser returns `Ok((input, e))`, effectively "inverting" the result,
-/// and the original error is returned while no input is consumed.
-/// Recursive errors from the inner parser are escalated as-is.
+/// **IMPORTANT: Recursive errors are escalated unchanged as an error.** This behavior is crucial to prevent infinite loops
+/// in recursive parsing contexts.
 ///
-/// Note that this parser does not consume any input.
+/// This parser acts as a bridge between regular parsers and the error-style parsers found in the [`reporting`] module.
+///
+///[`reporting`]: crate::reporting
 ///
 /// # Example
 /// ```rust
@@ -25,7 +25,7 @@ use crate::cache::DynCache;
 /// use syn::buffer::TokenBuffer;
 ///
 /// fn main() {
-///     let tokens = "dummy".parse().unwrap();
+///     let tokens = "2 dummy".parse().unwrap();
 ///     let buffer = TokenBuffer::new2(tokens);
 ///     let input = Input::new(&buffer);
 ///     let mut cache = BasicCache::<0>::new();
@@ -39,7 +39,7 @@ use crate::cache::DynCache;
 ///             println!("Inner parser did not match as expected. Error: {:?}", err);
 ///         },
 ///         Err(e) => {
-///             println!("Unexpected match: {:?}", e);
+///             panic!("Unexpected match: {:?}", e);
 ///         }
 ///     }
 /// }
@@ -101,7 +101,7 @@ where
 /// use pakerat_combinators::basic_parsers::IdentParser;
 /// use pakerat_combinators::cache::BasicCache;
 /// use pakerat_combinators::core::{Input, Expected};
-/// use pakerat_combinators::reporting::ParseMissmatch;
+/// use pakerat_combinators::reporting::ParseMismatch;
 /// use syn::buffer::TokenBuffer;
 ///
 /// let tokens = "dummy".parse().unwrap();
@@ -109,10 +109,10 @@ where
 /// let input = Input::new(&buffer);
 /// let mut cache = BasicCache::<0>::new();
 ///
-/// let mismatcher = ParseMissmatch::new(IdentParser, Expected::Text("a literal"));
+/// let mismatcher = ParseMismatch::new(IdentParser, Expected::Text("a literal"));
 /// let _ = mismatcher.parse(input, &mut cache);
 /// ```
-pub struct ParseMissmatch<INNER, T = (), O = T>
+pub struct ParseMismatch<INNER, T = (), O = T>
 where
     INNER: Combinator<T, O>,
     T: Parsable,
@@ -123,7 +123,7 @@ where
     pub _phantom: PhantomData<(T, O)>,
 }
 
-impl<INNER, T, O> ParseMissmatch<INNER, T, O>
+impl<INNER, T, O> ParseMismatch<INNER, T, O>
 where
     INNER: Combinator<T, O>,
     T: Parsable,
@@ -138,7 +138,7 @@ where
     }
 }
 
-impl<INNER, T, O> Combinator<ParseError, O> for ParseMissmatch<INNER, T, O>
+impl<INNER, T, O> Combinator<ParseError, O> for ParseMismatch<INNER, T, O>
 where
     INNER: Combinator<T, O>,
     T: Parsable,
@@ -247,7 +247,7 @@ where
 /// use pakerat_combinators::basic_parsers::IdentParser;
 /// use pakerat_combinators::cache::BasicCache;
 /// use pakerat_combinators::core::{Input, Expected, ParseError};
-/// use pakerat_combinators::reporting::{ParseMissmatch, ChecError};
+/// use pakerat_combinators::reporting::{ParseMismatch, CheckError};
 /// use syn::buffer::TokenBuffer;
 /// use std::marker::PhantomData;
 ///
@@ -257,28 +257,28 @@ where
 /// let mut cache = BasicCache::<0>::new();
 ///
 /// // Create a parser that expects a literal but finds an identifier.
-/// let mismatcher = ParseMissmatch::new(IdentParser, Expected::Text("a literal"));
+/// let mismatcher = ParseMismatch::new(IdentParser, Expected::Text("a literal"));
 ///
-/// // Wrap it in ChecError to turn the mismatch into a raised error.
-/// let raise = ChecError {
+/// // Wrap it in CheckError to turn the mismatch into a raised error.
+/// let raise = CheckError {
 ///     inner: mismatcher,
 ///     _phantom: PhantomData,
 /// };
 ///
 /// let result = raise.parse(input, &mut cache);
 ///
-/// // Since the input is an identifier, ParseMissmatch will succeed with an error,
-/// // which ChecError should then raise.
+/// // Since the input is an identifier, ParseMismatch will succeed with an error,
+/// // which CheckError should then raise.
 /// assert!(matches!(result, Err(PakeratError::Regular(ParseError::Simple(_)))));
 /// ```
-pub struct ChecError<INNER,O> 
+pub struct CheckError<INNER,O> 
 where INNER:Combinator<ParseError,O>,O:Parsable
 {
     pub inner: INNER,
     pub _phantom: PhantomData<O>,
 }
 
-impl<INNER,O> Combinator<(),O> for ChecError<INNER,O>
+impl<INNER,O> Combinator<(),O> for CheckError<INNER,O>
 where INNER:Combinator<ParseError,O>,O:Parsable{
 fn parse<'a>(
         &self,
