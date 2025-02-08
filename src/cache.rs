@@ -4,11 +4,11 @@
 //! Cached values should generally be cheap to clone since they are cloned for every parse that retrieves them.
 //! Note that errors are also cached. The cache is responsible for detecting infinite recursion via [`CacheStatus::Pending`].
 //!
-//! The two main implementations are [`FlexibleCache`] and [`BasicCache`].
+//! A cache requires a usize id for knowing which slot to read.
+//! In general try and cache every parse rule into its own dedicated id.
+//! this is usally captured very nicely in an enum
 //!
-//! Users are encouraged to define a custom enum for cache slots, implementing `Into<usize>`
-//! to provide a structured way to manage different parse states. This improves clarity and
-//! reduces the risk of collisions when multiple rules are cached.
+//! The two main implementations are [`FlexibleCache`] and [`BasicCache`].
 //!
 //! While [`FlexibleCache`] supports any key range, [`BasicCache`] is recommended where possible,
 //! as it allows for better performance when the number of parse rules is known ahead of time.  

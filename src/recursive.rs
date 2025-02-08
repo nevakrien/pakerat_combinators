@@ -9,7 +9,7 @@ use std::marker::PhantomData;
 /// A combinator that allows for recursive parsing by deferring initialization.
 ///
 /// `RecursiveParser` enables defining self-referential parsing rules in a safe manner.
-/// It uses `OnceCell` to lazily store and resolve the actual parser.
+/// It uses [`OnceCell`] to lazily store and resolve the actual parser.
 ///
 /// Note that the lifetime requirement can be a bit annoying, so using an arena allocator is a good idea.
 /// See [`typed-arena`](https://crates.io/crates/typed-arena) and [`erased-type-arena`](https://crates.io/crates/erased-type-arena).
@@ -56,7 +56,7 @@ use std::marker::PhantomData;
 /// let (remaining, result) = parser.parse(input, &mut cache).unwrap();
 /// assert!(remaining.eof());
 /// ```
-pub struct RecursiveParser<'parser, T: Parsable, O: Parsable = T> {
+pub struct RecursiveParser<'parser, T : Parsable = (), O: Parsable = T> {
     pub cell: OnceCell<&'parser dyn Combinator<T, O>>,
     pub _phantom: PhantomData<(T, O)>,
 }
@@ -71,6 +71,8 @@ impl<'parser, T: Parsable, O: Parsable> RecursiveParser<'parser, T, O> {
     /// Creates a new recursive parser without an initial implementation.
     ///
     /// The parser must be initialized using [`set`] before use.
+    ///
+    ///[`set`]: RecursiveParser::set
     pub fn new() -> Self {
         Self {
             cell: OnceCell::new(),

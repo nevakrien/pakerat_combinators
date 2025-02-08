@@ -473,8 +473,6 @@ where
 /// you can extract a sequence of tokens and later process them separately,
 /// allowing detailed error collection.
 ///
-/// See [`multi::Recognize`] for a combinator that applies this pattern to repeated parsing.
-///
 /// # Example Usage
 /// ```rust
 /// use pakerat_combinators::multi::{Recognize, Many0,Maybe,Pair};

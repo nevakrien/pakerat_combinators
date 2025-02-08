@@ -413,6 +413,53 @@ pub trait CombinatorExt<T: Parsable = (), O: Parsable = T>: Combinator<T, O> {
         }
     }
 
+
+    /// Constructs a box around this object then leaks it
+    ///
+    /// This allows the parser to be returned from a function with a reference that outlives the function scope,
+    /// making it useful when a parser needs a `'static` reference
+    ///
+    /// # Example
+    /// ```rust
+    /// use pakerat_combinators::combinator::{Combinator, CombinatorExt, RefParser};
+    /// use pakerat_combinators::multi::Pair;
+    /// use pakerat_combinators::basic_parsers::IdentParser;
+    /// use proc_macro2::Ident;
+    ///
+    /// // Function that constructs and returns a leaked parser.
+    /// fn create_parser() -> &'static dyn Combinator<(Ident,Ident)> {
+    ///     let ident_parser = IdentParser.leak();
+    ///     Pair::new(ident_parser, ident_parser).leak().inner
+    /// }
+    ///
+    /// let pair_parser = create_parser();
+    /// ```
+    fn leak(self) -> RefParser<'static, Self, T, O> where Self: Sized{
+        let inner = Box::leak(Box::new(self));
+        RefParser{
+            inner,
+            _phantom:PhantomData
+        }
+    }
+
+    /// Constructs a box around this object then leaks it,
+    /// returning a *mut pointer to it for freeing later
+    ///
+    /// This is similar to [`leak`](CombinatorExt::leak)
+    fn leak2(self) -> (RefParser<'static, Self, T, O>,*mut Self) where Self: Sized{
+        let r = Box::leak(Box::new(self));
+        let ptr = r as *mut _;
+        let inner :&Self = r;
+        
+        (
+            RefParser{
+                inner,
+                _phantom:PhantomData
+            },
+            ptr
+        )
+    }
+
     /// Applies a transformation function to the output of the combinator.
     ///
     /// This is syntax sugar around [`MapCombinator`], allowing you to modify
@@ -453,6 +500,22 @@ pub trait CombinatorExt<T: Parsable = (), O: Parsable = T>: Combinator<T, O> {
         }
     }
 
+    /// Wraps a parser to filter its output based on a predicate.
+    ///
+    /// After parsing using the inner parser, the given filtering function is applied to the result.
+    /// If the filtering function returns `true`, the output is accepted; otherwise, a missmatch error is returned.
+    /// "Found x Expected {}" with a user define expected text.
+    ///
+    /// This is just syntax sugar around [`Filter`]
+    fn filter<F>(self, filter_fn: F, expected: &'static str) -> Filter<Self, T, O, F>
+    where
+        F: for<'a> Fn(&T::Output<'a>) -> bool,
+        Self: Sized,
+    {
+        Filter::new(self, filter_fn, expected)
+    }
+
+
     /// Parses input calling into on both the sides of the [`Result`]
     ///
     /// This is mainly useful for integrating with syn
@@ -490,28 +553,28 @@ pub trait CombinatorExt<T: Parsable = (), O: Parsable = T>: Combinator<T, O> {
         Ok((input, t.into()))
     }
 
-    /// Wraps a parser to filter its output based on a predicate.
-    ///
-    /// After parsing using the inner parser, the given filtering function is applied to the result.
-    /// If the filtering function returns `true`, the output is accepted; otherwise, a missmatch error is returned.
-    /// "Found x Expected {}" with a user define expected text.
-    ///
-    /// This is just syntax sugar around [`Filter`]
-    fn filter<F>(self, filter_fn: F, expected: &'static str) -> Filter<Self, T, O, F>
-    where
-        F: for<'a> Fn(&T::Output<'a>) -> bool,
-        Self: Sized,
-    {
-        Filter::new(self, filter_fn, expected)
-    }
 
     /// Recognizes a portion of the input returning it as an Input.
     ///
-    /// Useful for splitting parsing into distinct stages, by extracting segments with [`Many0`] see [`multi::Recognize`]
+    /// Useful for splitting parsing into distinct stages, by extracting segments with [`Many0`].
+    /// See [`Recognize`] for an example use.
+    ///
+    /// [`Many0`]: crate::multi::Many0
+    /// [`Recognize`]: crate::multi::Recognize
+
     fn parse_recognize<'a>(&self,input:Input<'a>,cache: &mut dyn DynCache<'a,O>) -> Pakerat<(Input<'a>,Input<'a>)>{
         let next = self.parse_ignore(input,cache)?;
         Ok((next,input.truncate(next)))
     }
+
+    /// Wraps the parser in an [`RcParser`], giving it a static‑like lifetime.
+    fn as_rc(self) -> RcParser<T, O,Self>
+    where
+        Self: Sized,
+    {
+        RcParser::new(self)
+    }
+
 
 }
 
@@ -558,11 +621,16 @@ where
 /// This struct is primarily created using [`CombinatorExt::as_ref`], which allows
 /// an existing combinator to be reused in multiple combinator constructions without
 /// ownership issues. See [`CombinatorExt::as_ref`] for a full example.
-#[derive(Clone, Copy)]
 pub struct RefParser<'parser, INNER: Combinator<T, O>, T: Parsable, O: Parsable> {
     pub inner: &'parser INNER,
     pub _phantom: PhantomData<(T, O)>,
 }
+
+impl<'parser, INNER: Combinator<T, O>, T: Parsable, O: Parsable> Clone for RefParser<'parser, INNER, T, O>{
+
+fn clone(&self) -> Self { Self{inner:self.inner,_phantom:PhantomData} }
+}
+impl<'parser, INNER: Combinator<T, O>, T: Parsable, O: Parsable> Copy for RefParser<'parser, INNER, T, O>{}
 
 impl<T: Parsable, O: Parsable, INNER: Combinator<T, O>> Combinator<T, O>
     for RefParser<'_, INNER, T, O>
@@ -726,5 +794,141 @@ where
             expected,
             _phantom: std::marker::PhantomData,
         }
+    }
+}
+
+/// A reference-counted parser wrapper.
+/// This enables you to produce a parser with a pseudo‑static lifetime.
+pub struct RcParser<T:Parsable, O:Parsable, P: Combinator<T, O>>
+   
+{
+    pub inner: Rc<P>,
+    pub _phantom: PhantomData<(T, O)>,
+}
+
+impl<T:Parsable, O:Parsable, P: Combinator<T, O>> Clone for RcParser<T, O, P>{
+
+fn clone(&self) -> Self {Self{inner:self.inner.clone(),_phantom:PhantomData}}
+}
+
+impl<T:Parsable, O:Parsable, P: Combinator<T, O>> RcParser<T, O, P>
+{
+    /// Creates a new `RcParser` from the given combinator.
+    pub fn new(parser: P) -> Self {
+        RcParser {
+            inner: Rc::new(parser),
+            _phantom: PhantomData,
+        }
+    }
+
+    /// Creates a weak reference to the parser, allowing it to be referenced without extending its lifetime.
+    ///
+    /// This method is useful for avoiding reference cycles when using [`as_rc`](CombinatorExt::as_rc).
+    /// It allows a parser to be referenced without preventing it from being deallocated when no strong references remain.
+    /// 
+    /// This is a fairly neich feature you would usually want [`leak`](CombinatorExt::leak) or [`as_ref`](CombinatorExt::as_ref).
+    /// keep in mind most parsers live for the lifetime of the aplication.
+    ///
+    /// # Example
+    /// ```rust
+    /// use pakerat_combinators::basic_parsers::IdentParser;
+    /// use pakerat_combinators::combinator::{CombinatorExt, RcParser, WeakParser};
+    /// use proc_macro2::Ident;
+    ///
+    /// struct Container {
+    ///     parser: RcParser<Ident, (),IdentParser>,
+    ///     reference: WeakParser<Ident,(),IdentParser>,
+    /// }
+    ///
+    /// impl Container {
+    ///     fn new() -> Self {
+    ///         let parser = IdentParser.as_rc();
+    ///         let weak_parser = parser.weak();
+    ///
+    ///         Self {
+    ///             parser,
+    ///             reference: weak_parser,
+    ///         }
+    ///     }
+    ///
+    /// }
+    ///
+    /// let container = Container::new();
+    /// let weak = container.parser.weak();
+    ///
+    /// std::mem::drop(container); // The strong reference to parser is dropped.
+    ///
+    /// assert_eq!(weak.inner.strong_count(),0)
+    /// ```
+    pub fn weak(&self) -> WeakParser<T, O,P> {
+        WeakParser {
+            inner: Rc::downgrade(&self.inner),
+            _phantom: PhantomData,
+        }
+    }
+}
+
+impl<T:Parsable, O:Parsable, P: Combinator<T, O>> Combinator<T, O> for RcParser<T, O, P>
+{
+    fn parse<'a>(
+        &self,
+        input: Input<'a>,
+        state: &mut dyn DynCache<'a, O>,
+    ) -> Pakerat<(Input<'a>, T::Output<'a>)> {
+        self.inner.parse(input, state)
+    }
+
+    fn parse_ignore<'a>(
+        &self,
+        input: Input<'a>,
+        state: &mut dyn DynCache<'a, O>,
+    ) -> Pakerat<Input<'a>> {
+        self.inner.parse_ignore(input, state)
+    }
+}
+
+/// A weak pointer based parser.
+/// It holds a `Weak` reference to the inner combinator so that it does not extend the lifetime of the parser.
+///
+/// See ['RcParser::weak'] for more details
+pub struct WeakParser< T: Parsable, O: Parsable, P: Combinator<T, O>,>
+where
+    P: Combinator<T, O>,
+{
+    pub inner: std::rc::Weak<P>,
+    pub _phantom: std::marker::PhantomData<(T, O)>,
+}
+
+impl<T:Parsable, O:Parsable, P: Combinator<T, O>> Clone for WeakParser<T, O, P>{
+
+fn clone(&self) -> Self {Self{inner:self.inner.clone(),_phantom:PhantomData}}
+}
+
+impl< T: Parsable, O: Parsable, P: Combinator<T, O>,> WeakParser<T, O,P>
+{
+    /// Attempts to upgrade the weak reference, panicking if it fails.
+    fn upgrade(&self) -> Rc<P> {
+        self.inner
+            .upgrade()
+            .expect("WeakParser upgrade failed: the Rc instance has been dropped.")
+    }
+}
+
+impl< T: Parsable, O: Parsable, P: Combinator<T, O>,> Combinator<T, O> for WeakParser<T, O,P>
+{
+    fn parse<'a>(
+        &self,
+        input: Input<'a>,
+        state: &mut dyn DynCache<'a, O>,
+    ) -> Pakerat<(Input<'a>, T::Output<'a>)> {
+        self.upgrade().parse(input, state)
+    }
+
+    fn parse_ignore<'a>(
+        &self,
+        input: Input<'a>,
+        state: &mut dyn DynCache<'a, O>,
+    ) -> Pakerat<Input<'a>> {
+        self.upgrade().parse_ignore(input, state)
     }
 }

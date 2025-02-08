@@ -1,7 +1,10 @@
+#![allow(dead_code)]
+
 /// this example was made by giving chatgpt a few important pages of docs then mostly just letting it do its thing
 /// it took about 3 prompts to get and is mostly here as a way for me as a maintainer to see how LLMs handle my code
 /// in terms of quality its probably not the best example
 /// in paticular the poor thing could not figure out how to use the cache correctly which is a sign to update cache documentation
+
 
 use pakerat_combinators::combinator::{Parsable, Combinator, CombinatorExt};
 use pakerat_combinators::basic_parsers::{IdentParser, IntParser, PunctParser, DelParser};
