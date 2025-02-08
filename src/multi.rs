@@ -873,6 +873,63 @@ macro_rules! __one_of_internal {
         $last
     };
 }
+
+
+/// Creates a statically dispatched `OrLast` parser from arbitrary input [`Combinator`]s.
+///
+/// This macro generates a chain of [`OrLast`] parsers.  
+/// Unlike [`one_of!`], which provides better error messages, `one_of_last!` will return the error from the last parser.
+///
+/// **If error messaging is important, prefer [`one_of!`].**
+///
+/// The provided parsers must share an output type. If this is an issue, try making the output an enum.
+/// The easiest way to ensure this is by using [`Ignore`] to make the output `()`.
+///
+/// # Example
+/// ```rust
+/// use pakerat_combinators::one_of_last;
+/// use pakerat_combinators::multi::Ignore;
+/// use pakerat_combinators::basic_parsers::{IdentParser, PunctParser, IntParser};
+/// use pakerat_combinators::combinator::Combinator;
+/// use pakerat_combinators::cache::BasicCache;
+/// use pakerat_combinators::core::Input;
+/// use syn::buffer::TokenBuffer;
+///
+/// let tokens = "my_var rest".parse().unwrap();
+/// let buffer = TokenBuffer::new2(tokens);
+/// let input = Input::new(&buffer);
+///
+/// let parser = one_of_last!(
+///     Ignore::new(IdentParser),
+///     Ignore::new(IntParser),
+///     Ignore::new(PunctParser)
+/// );
+///
+/// let mut cache = BasicCache::<0>::new();
+/// let next = parser.parse_ignore(input, &mut cache).unwrap();
+/// assert_eq!(next.span().source_text(), Some("rest".to_string()));
+/// ```
+///
+/// ## **⚠ Potential Pitfall: Ordering Matters!**
+///
+/// Like [`one_of!`], `one_of_last!` selects the first parser that succeeds, meaning that if an earlier parser is too permissive,  
+/// later parsers may never get a chance to execute.
+///
+/// **Ensure your parser ordering is intentional.** If you need better error reporting, use [`one_of!`] instead.
+///
+/// [`one_of!`]: crate::one_of
+/// [`OrLast`]: crate::multi::OrLast
+#[macro_export]
+macro_rules! one_of_last {
+    ($first:expr $(, $rest:expr)+ $(,)?) => {
+        $crate::__one_of_internal!($first $(, $rest)+)
+    };
+}
+
+pub use one_of_last;
+
+
+
 /// A `OneOf` combinator that attempts multiple parsers in sequence.
 /// On fail would return a [`Mismatch`] error
 ///
@@ -1006,6 +1063,123 @@ where
         }
     }
 }
+
+/// A `OneOfLast` combinator that attempts multiple parsers in sequence.
+/// On failure, it returns the last parser's error.
+///
+/// Unlike [`one_of_last!`], this combinator allows an arbitrary number of parsers
+/// at runtime. However, all parsers **must be of the same type**, which often
+/// requires dynamic dispatch via `Rc<dyn Combinator>`.
+///
+/// **If better error reporting is needed, prefer [`OneOf`].**
+///
+/// # Example
+/// ```rust
+/// use proc_macro2::{Delimiter, TokenStream};
+/// use std::{marker::PhantomData, rc::Rc};
+/// use syn::buffer::TokenBuffer;
+/// use pakerat_combinators::{
+///     basic_parsers::{DelParser, IntParser},
+///     combinator::Combinator,
+///     core::Input,
+///     multi::{OneOfLast, Wrapped},
+///     cache::{BasicCache, FlexibleCache},
+/// };
+///
+/// let tokens: TokenStream = "42 {99}".parse().unwrap();
+/// let buffer = TokenBuffer::new2(tokens);
+/// let input = Input::new(&buffer);
+/// let mut cache = FlexibleCache::new();
+///
+/// let int_parser = Rc::new(IntParser) as Rc<dyn Combinator<i64, ()>>;
+/// let delimited_int_parser = Rc::new(Wrapped {
+///     wrapper: DelParser(Delimiter::Brace),
+///     inner: IntParser,
+///     _phantom: PhantomData,
+/// }) as Rc<dyn Combinator<_, _>>;
+///
+/// let one_of_last_parser = OneOfLast::new(vec![int_parser, delimited_int_parser].into_boxed_slice());
+///
+/// // Parse first integer
+/// let (remaining, parsed_int) = one_of_last_parser.parse(input, &mut cache).unwrap();
+/// assert_eq!(parsed_int, 42);
+///
+/// // Parse delimited integer
+/// let (_, parsed_del_int) = one_of_last_parser.parse(remaining, &mut cache).unwrap();
+/// assert_eq!(parsed_del_int, 99);
+/// ```
+pub struct OneOfLast<P, T = (), O = T>
+where
+    P: Combinator<T, O>,
+    T: Parsable,
+    O: Parsable,
+{
+    /// A list of parsers of the **same type**, stored in a boxed slice.
+    pub alternatives: Box<[P]>,
+    /// Phantom data to tie lifetimes and types together.
+    pub _phantom: PhantomData<(T, O)>,
+}
+
+impl<P, T, O> Combinator<T, O> for OneOfLast<P, T, O>
+where
+    P: Combinator<T, O>,
+    T: Parsable,
+    O: Parsable,
+{
+    fn parse<'a>(
+        &self,
+        input: Input<'a>,
+        cache: &mut dyn DynCache<'a, O>,
+    ) -> Pakerat<(Input<'a>, T::Output<'a>)> {
+        let mut last_err = None;
+
+        for alt in &*self.alternatives {
+            match alt.parse(input, cache) {
+                Ok(ok) => return Ok(ok),
+                Err(err) => last_err = Some(err), // Store last encountered error
+            }
+        }
+
+        Err(last_err.expect("OneOfLast must contain at least one parser")) // Return the last error
+    }
+
+    fn parse_ignore<'a>(
+        &self,
+        input: Input<'a>,
+        cache: &mut dyn DynCache<'a, O>,
+    ) -> Pakerat<Input<'a>> {
+        let mut last_err = None;
+
+        for alt in &*self.alternatives {
+            match alt.parse_ignore(input, cache) {
+                Ok(ok) => return Ok(ok),
+                Err(err) => last_err = Some(err), // Store last encountered error
+            }
+        }
+
+        Err(last_err.expect("OneOfLast must contain at least one parser")) // Return the last error
+    }
+}
+
+impl<P, T, O> OneOfLast<P, T, O>
+where
+    P: Combinator<T, O>,
+    T: Parsable,
+    O: Parsable,
+{
+    /// Creates a new `OneOfLast` parser.
+    pub fn new(parsers: Box<[P]>) -> Self {
+        assert!(
+            !parsers.is_empty(),
+            "OneOfLast must contain at least one parser"
+        );
+        OneOfLast {
+            alternatives: parsers,
+            _phantom: PhantomData,
+        }
+    }
+}
+
 
 /// A `Pair` combinator that applies two parsers sequentially.
 ///
