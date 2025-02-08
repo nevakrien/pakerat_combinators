@@ -343,6 +343,9 @@ where
 /// If it returns a regular error the parser succeeds returning the input.
 ///
 /// This parser is useful as a way to validate inputs. The returned error can be customized, which is the main benefit.
+/// Try using with [`Wrapped`] as a way to validate inputs. 
+///
+/// [`Wrapped`]: crate::multi::Wrapped
 ///
 /// # Example
 /// ```rust
@@ -395,4 +398,126 @@ fn parse<'a>(
     }
 
 }
+}
+
+
+/// Improves the error of its inner parser by running an alternative error parser when the inner parser fails.
+///
+/// The improved error preserves the original error's variant.  
+/// **WARNING:** Catching recursive errors this way can lead to infinite loops if used recursively; see
+/// [`ParseReportAll`] for details.
+///
+/// # Example
+/// ```rust
+/// use pakerat_combinators::combinator::Combinator;
+/// use pakerat_combinators::basic_parsers::{IntParser, IdentParser};
+/// use pakerat_combinators::cache::BasicCache;
+/// use pakerat_combinators::core::{Input, ParseError};
+/// use pakerat_combinators::reporting::{ImproveError, ParseForbiden};
+/// use pakerat_combinators::combinator::PakeratError;
+/// use syn::buffer::TokenBuffer;
+///
+/// let error_parser = ParseForbiden::new(IntParser, "forbidden integer usage");
+/// let improved = ImproveError::new(IdentParser, error_parser);
+///
+/// // Create a cache with at least one slot (key 0 is used).
+/// let mut cache = BasicCache::<1, PakeratError>::new();
+///
+/// // Case 1: Input "123" (a number)
+/// // - IdentParser fails because "123" is not an identifier.
+/// // - ParseForbiden matches "123" as an integer and reports "forbidden integer usage."
+/// let tokens = "123".parse().unwrap();
+/// let buffer = TokenBuffer::new2(tokens);
+/// let input = Input::new(&buffer);
+///
+/// match improved.parse(input, &mut cache) {
+///     Ok((_, value)) => println!("Unexpected success: {:?}", value),
+///     Err(e) => println!("Input: \"123\" | Improved error: {:?}", e),
+/// }
+///
+/// // Case 2: Input ";" (neither an identifier nor an integer)
+/// // - IdentParser fails because ";" is not an identifier.
+/// // - ParseForbiden also fails because ";" is not an integer.
+/// // - Since the error parser fails, the original IdentParser error is returned.
+/// let tokens = ";".parse().unwrap();
+/// let buffer = TokenBuffer::new2(tokens);
+/// let input = Input::new(&buffer);
+///
+/// match improved.parse(input, &mut cache) {
+///     Ok((_, value)) => println!("Unexpected success: {:?}", value),
+///     Err(e) => println!("Input: \";\" | Improved error: {:?}", e),
+/// }
+/// ```
+
+pub struct ImproveError<INNER, ERR, T = (), O = T>
+where
+    INNER: Combinator<T, O>,
+    ERR: Combinator<ParseError, O>,
+    T: Parsable,
+    O: Parsable,
+{
+    pub inner: INNER,
+    pub error_parser: ERR,
+    pub _phantom: PhantomData<(T, O)>,
+}
+
+impl<INNER, ERR, T, O> ImproveError<INNER, ERR, T, O>
+where
+    INNER: Combinator<T, O>,
+    ERR: Combinator<ParseError, O>,
+    T: Parsable,
+    O: Parsable,
+{
+    pub fn new(inner: INNER, error_parser: ERR) -> Self {
+        Self {
+            inner,
+            error_parser,
+            _phantom: PhantomData,
+        }
+    }
+    
+    fn make_err<'a>(
+        &self,
+        input: Input<'a>,
+        cache: &mut dyn DynCache<'a, O>,
+        orig: PakeratError,
+    ) -> PakeratError {
+        match self.error_parser.parse(input, cache) {
+            Ok((_i, improved)) => match orig {
+                PakeratError::Regular(_) => PakeratError::Regular(improved),
+                PakeratError::Recursive(_) => PakeratError::Recursive(improved),
+            },
+            Err(_) => orig,
+        }
+    }
+}
+
+impl<INNER, ERR, T, O> Combinator<T, O> for ImproveError<INNER, ERR, T, O>
+where
+    INNER: Combinator<T, O>,
+    ERR: Combinator<ParseError, O>,
+    T: Parsable,
+    O: Parsable,
+{
+    fn parse<'a>(
+        &self,
+        input: Input<'a>,
+        cache: &mut dyn DynCache<'a, O>,
+    ) -> Pakerat<(Input<'a>, T::Output<'a>)> {
+        match self.inner.parse(input, cache) {
+            Ok(good) => Ok(good),
+            Err(orig) => Err(self.make_err(input, cache, orig)),
+        }
+    }
+    
+    fn parse_ignore<'a>(
+        &self,
+        input: Input<'a>,
+        cache: &mut dyn DynCache<'a, O>,
+    ) -> Pakerat<Input<'a>> {
+        match self.inner.parse_ignore(input, cache) {
+            Ok(good) => Ok(good),
+            Err(orig) => Err(self.make_err(input, cache, orig)),
+        }
+    }
 }

@@ -205,15 +205,15 @@ impl_parsble_for_tuples!(T1, T2, T3, T4, T5, T6, T7, T8);
 ///
 /// [`map`]: crate::combinator::CombinatorExt::map
 /// [`multi`]: crate::multi
-pub trait Combinator<T: Parsable = (), O: Parsable = T> {
+pub trait Combinator<Out: Parsable = (), Cach: Parsable = Out> {
     /// Parses the given input, utilizing the provided cache.
     ///
     /// Returns a [`Pakerat`] result containing the remaining input and the parsed output.
     fn parse<'a>(
         &self,
         input: Input<'a>,
-        state: &mut dyn DynCache<'a, O>,
-    ) -> Pakerat<(Input<'a>, T::Output<'a>)>;
+        state: &mut dyn DynCache<'a, Cach>,
+    ) -> Pakerat<(Input<'a>, Out::Output<'a>)>;
 
     /// Parses the input while discarding the output.
     ///
@@ -222,7 +222,7 @@ pub trait Combinator<T: Parsable = (), O: Parsable = T> {
     fn parse_ignore<'a>(
         &self,
         input: Input<'a>,
-        state: &mut dyn DynCache<'a, O>,
+        state: &mut dyn DynCache<'a, Cach>,
     ) -> Pakerat<Input<'a>> {
         let (ans, _) = self.parse(input, state)?;
         Ok(ans)
