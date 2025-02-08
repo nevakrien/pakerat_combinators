@@ -4,12 +4,13 @@ use crate::combinator::{Combinator, Parsable, Pakerat, PakeratError};
 use crate::core::{Input, Expected, Found, Mismatch, ParseError};
 use crate::cache::DynCache;
 
+
 /// A parser that reports an error when the inner parser succeeds.
 ///
-/// If the inner parser finds a match, this parser returns `Ok(ParseError)`, 
-/// allowing error detection without stopping parsing.  
-/// If the inner parser fails regularly, this parser returns `Err(ParseError::Empty)`, 
-/// discarding the original error.  
+/// If the inner parser finds a match, this parser returns an error (`Err(PakeratError::Regular(ParseError::Empty))`),
+/// indicating that an unexpected match occurred.  
+/// If the inner parser fails regularly, this parser returns `Ok((input, e))`, effectively "inverting" the result,
+/// and the original error is returned while no input is consumed.
 /// Recursive errors from the inner parser are escalated as-is.
 ///
 /// Note that this parser does not consume any input.
@@ -19,17 +20,29 @@ use crate::cache::DynCache;
 /// use pakerat_combinators::combinator::Combinator;
 /// use pakerat_combinators::basic_parsers::IdentParser;
 /// use pakerat_combinators::cache::BasicCache;
-/// use pakerat_combinators::core::Input;
+/// use pakerat_combinators::core::{Input, ParseError};
 /// use pakerat_combinators::reporting::ParseReport;
 /// use syn::buffer::TokenBuffer;
 ///
-/// let tokens = "dummy".parse().unwrap();
-/// let buffer = TokenBuffer::new2(tokens);
-/// let input = Input::new(&buffer);
-/// let mut cache = BasicCache::<0>::new();
+/// fn main() {
+///     let tokens = "dummy".parse().unwrap();
+///     let buffer = TokenBuffer::new2(tokens);
+///     let input = Input::new(&buffer);
+///     let mut cache = BasicCache::<0>::new();
 ///
-/// let reporter = ParseReport::new(IdentParser);
-/// let _ = reporter.parse(input, &mut cache);
+///     let reporter = ParseReport::new(IdentParser);
+///
+///     // If IdentParser succeeds (i.e. "dummy" is an identifier),
+///     // the inverse parser returns an error.
+///     match reporter.parse(input, &mut cache) {
+///         Ok((_input, err)) => {
+///             println!("Inner parser did not match as expected. Error: {:?}", err);
+///         },
+///         Err(e) => {
+///             println!("Unexpected match: {:?}", e);
+///         }
+///     }
+/// }
 /// ```
 pub struct ParseReport<INNER, T = (), O = T>
 where
