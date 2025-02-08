@@ -366,7 +366,6 @@ where
         CacheStatus::Empty => {
             spot.0 = CacheStatus::Pending;
             let ans = parser.parse(input, cache);
-            // let ans = place_holder(parser,input,cache);
 
             //need to get spot again since parse may of changed it
             let spot = cache.get_dyn_slot(id).get(key).expect("missing key");

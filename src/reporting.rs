@@ -9,7 +9,7 @@ use crate::cache::DynCache;
 /// Conversely, if the inner parser succeeds, it returns a failure (`ParseError::Empty`).
 ///
 /// **IMPORTANT: Recursive errors are escalated unchanged as an error.** This behavior is crucial to prevent infinite loops
-/// in recursive parsing contexts.
+/// in recursive parsing contexts. If this is not desired use [`ParseReportAll`] instead.
 ///
 /// This parser acts as a bridge between regular parsers and the error-style parsers found in the [`reporting`] module.
 ///
@@ -83,6 +83,109 @@ where
             Ok(_) => Err(PakeratError::Regular(ParseError::Empty)),
             Err(PakeratError::Regular(e)) => Ok((input,e)),
             Err(PakeratError::Recursive(e)) => Err(PakeratError::Recursive(e)),
+        }
+    }
+}
+
+/// This combinator is meant for diagnostic purposes: when used, it catches errors from its inner parser, both
+/// non‑recursive and recursive returning them as a successful result, reporting what the error would have been
+/// without consuming any input. Conversely, if the inner parser succeeds (i.e. produces no error), it returns a
+/// failure (`ParseError::Empty`).
+///
+/// **WARNING:** If you intend to allow the child to call this combinator (i.e. if the child parser contains the parent
+/// in its recursive definitions), it is **highly recommended** to wrap a `ParseReportAll` instance in a caching
+/// combinator (such as [`CachedComb`]) with a dedicated cache key. In cases where the child never calls the parent,
+/// such wrapping is not necessary. However, when the child does invoke this combinator, failure to cache may result in
+/// non‑linear or infinite parse times.
+///
+/// In most cases, [`ParseReport`]—which only catches non‑recursive errors—is the superior diagnostic option.
+/// Use `ParseReportAll` only when you explicitly need to report recursive errors as well.
+///
+/// [`CachedComb`]: crate::cache::CachedComb
+/// [`ParseReport`]: crate::reporting::ParseReport
+///
+/// # Example
+///
+/// ```rust
+/// use pakerat_combinators::combinator::Combinator;
+/// use pakerat_combinators::basic_parsers::IdentParser;
+/// use pakerat_combinators::cache::{CachedComb, BasicCache};
+/// use pakerat_combinators::core::{Input, ParseError};
+/// use pakerat_combinators::reporting::ParseReportAll;
+/// use syn::buffer::TokenBuffer;
+///
+/// fn main() {
+///     // Our base parser is an identifier parser.
+///     let base_parser = IdentParser;
+///     
+///     // Wrap the base parser in ParseReportAll to catch both non‑recursive and recursive errors.
+///     let report_all = ParseReportAll::new(base_parser);
+///     
+///     // If your inner parser (the child) might call this combinator recursively,
+///     // it is highly recommended to wrap the report_all parser in a caching combinator with a dedicated cache key.
+///     let reporting_parser = CachedComb::new(report_all, 0, "infinite loop bug");
+///     
+///     let tokens = "dummy".parse().unwrap();
+///     let buffer = TokenBuffer::new2(tokens);
+///     let input = Input::new(&buffer);
+///     
+///     // Ensure that the cache is sized sufficiently (here, 1 is used because key 0 is accessed).
+///     let mut cache = BasicCache::<1, ParseError>::new();
+///     
+///     // Use the reporting parser. If the inner parser succeeds (i.e. no error occurs), then
+///     // ParseReportAll returns a failure. Otherwise, it reports the error (whether non‑recursive or recursive).
+///     match reporting_parser.parse(input, &mut cache) {
+///         Ok((_remaining, error)) => {
+///             println!("Reported error: {:?}", error);
+///         },
+///         Err(e) => {
+///             println!("Unexpected success (inner parser matched): {:?}", e);
+///         }
+///     }
+/// }
+/// ```
+pub struct ParseReportAll<INNER, T = (), O = T>
+where
+    INNER: Combinator<T, O>,
+    T: Parsable,
+    O: Parsable,
+{
+    pub inner: INNER,
+    pub _phantom: PhantomData<(T, O)>,
+}
+
+impl<INNER, T, O> ParseReportAll<INNER, T, O>
+where
+    INNER: Combinator<T, O>,
+    T: Parsable,
+    O: Parsable,
+{
+    pub fn new(inner: INNER) -> Self {
+        Self {
+            inner,
+            _phantom: PhantomData,
+        }
+    }
+}
+
+impl<INNER, T, O> Combinator<ParseError, O> for ParseReportAll<INNER, T, O>
+where
+    INNER: Combinator<T, O>,
+    T: Parsable,
+    O: Parsable,
+{
+    fn parse<'a>(
+        &self,
+        input: Input<'a>,
+        cache: &mut dyn DynCache<'a, O>,
+    ) -> Pakerat<(Input<'a>, ParseError)> {
+        match self.inner.parse_recognize(input, cache) {
+            // If the inner parser succeeds (i.e. produces no error), then report a failure.
+            Ok(_) => Err(PakeratError::Regular(ParseError::Empty)),
+            // If the inner parser fails with a regular error, report that error.
+            Err(PakeratError::Regular(e)) => Ok((input, e)),
+            // If the inner parser fails with a recursive error, also report that error.
+            Err(PakeratError::Recursive(e)) => Ok((input, e)),
         }
     }
 }
