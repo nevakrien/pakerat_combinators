@@ -87,8 +87,8 @@ where
     }
 }
 
-/// This combinator is meant for diagnostic purposes: when used, it catches errors from its inner parser, both
-/// non‑recursive and recursive returning them as a successful result, reporting what the error would have been
+/// This combinator is meant for diagnostic purposes: when used, it catches errors from its inner parser—both
+/// non‑recursive and recursive—returning them as a successful result that reports what the error would have been
 /// without consuming any input. Conversely, if the inner parser succeeds (i.e. produces no error), it returns a
 /// failure (`ParseError::Empty`).
 ///
@@ -107,10 +107,10 @@ where
 /// # Example
 ///
 /// ```rust
-/// use pakerat_combinators::combinator::Combinator;
+/// use pakerat_combinators::combinator::{Combinator,PakeratError};
 /// use pakerat_combinators::basic_parsers::IdentParser;
 /// use pakerat_combinators::cache::{CachedComb, BasicCache};
-/// use pakerat_combinators::core::{Input, ParseError};
+/// use pakerat_combinators::core::{Input,};
 /// use pakerat_combinators::reporting::ParseReportAll;
 /// use syn::buffer::TokenBuffer;
 ///
@@ -130,7 +130,7 @@ where
 ///     let input = Input::new(&buffer);
 ///     
 ///     // Ensure that the cache is sized sufficiently (here, 1 is used because key 0 is accessed).
-///     let mut cache = BasicCache::<1, ParseError>::new();
+///     let mut cache = BasicCache::<1, PakeratError>::new();
 ///     
 ///     // Use the reporting parser. If the inner parser succeeds (i.e. no error occurs), then
 ///     // ParseReportAll returns a failure. Otherwise, it reports the error (whether non‑recursive or recursive).
@@ -168,7 +168,7 @@ where
     }
 }
 
-impl<INNER, T, O> Combinator<ParseError, O> for ParseReportAll<INNER, T, O>
+impl<INNER, T, O> Combinator<PakeratError, O> for ParseReportAll<INNER, T, O>
 where
     INNER: Combinator<T, O>,
     T: Parsable,
@@ -178,14 +178,10 @@ where
         &self,
         input: Input<'a>,
         cache: &mut dyn DynCache<'a, O>,
-    ) -> Pakerat<(Input<'a>, ParseError)> {
+    ) -> Pakerat<(Input<'a>, PakeratError)> {
         match self.inner.parse_recognize(input, cache) {
-            // If the inner parser succeeds (i.e. produces no error), then report a failure.
             Ok(_) => Err(PakeratError::Regular(ParseError::Empty)),
-            // If the inner parser fails with a regular error, report that error.
-            Err(PakeratError::Regular(e)) => Ok((input, e)),
-            // If the inner parser fails with a recursive error, also report that error.
-            Err(PakeratError::Recursive(e)) => Ok((input, e)),
+            Err(e)=> Ok((input, e)),
         }
     }
 }

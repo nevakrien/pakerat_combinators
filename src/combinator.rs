@@ -131,9 +131,12 @@ impl_parsble!(
 );
 impl_parsble!(Ident, Punct, Literal, TokenTree, Group, Delimiter, Span, Lifetime);
 
-impl<E:Error+Clone+Parsable> Parsable for PakeratError<E>{
-
-type Output<'a> = E::Output<'a>;
+impl<E> Parsable for PakeratError<E>
+where
+    E: Error + Clone + Parsable,
+    for<'a> E::Output<'a>: Clone + std::error::Error, 
+{
+    type Output<'a> = PakeratError<E::Output<'a>>;
 }
 
 
