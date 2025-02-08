@@ -233,3 +233,63 @@ where
         }
     }
 }
+
+/// Inverted parser that raises errors on inner successes.
+///
+/// If the inner parser returns `Ok((_, err))`, its error is raised as a failure.
+/// If it returns a regular error the parser succeeds returning the input.
+///
+/// This parser is useful as a way to validate inputs. The returned error can be customized, which is the main benefit.
+///
+/// # Example
+/// ```rust
+/// use pakerat_combinators::combinator::{PakeratError,Combinator};
+/// use pakerat_combinators::basic_parsers::IdentParser;
+/// use pakerat_combinators::cache::BasicCache;
+/// use pakerat_combinators::core::{Input, Expected, ParseError};
+/// use pakerat_combinators::reporting::{ParseMissmatch, ChecError};
+/// use syn::buffer::TokenBuffer;
+/// use std::marker::PhantomData;
+///
+/// let tokens = "identifier".parse().unwrap();
+/// let buffer = TokenBuffer::new2(tokens);
+/// let input = Input::new(&buffer);
+/// let mut cache = BasicCache::<0>::new();
+///
+/// // Create a parser that expects a literal but finds an identifier.
+/// let mismatcher = ParseMissmatch::new(IdentParser, Expected::Text("a literal"));
+///
+/// // Wrap it in ChecError to turn the mismatch into a raised error.
+/// let raise = ChecError {
+///     inner: mismatcher,
+///     _phantom: PhantomData,
+/// };
+///
+/// let result = raise.parse(input, &mut cache);
+///
+/// // Since the input is an identifier, ParseMissmatch will succeed with an error,
+/// // which ChecError should then raise.
+/// assert!(matches!(result, Err(PakeratError::Regular(ParseError::Simple(_)))));
+/// ```
+pub struct ChecError<INNER,O> 
+where INNER:Combinator<ParseError,O>,O:Parsable
+{
+    pub inner: INNER,
+    pub _phantom: PhantomData<O>,
+}
+
+impl<INNER,O> Combinator<(),O> for ChecError<INNER,O>
+where INNER:Combinator<ParseError,O>,O:Parsable{
+fn parse<'a>(
+        &self,
+        input: Input<'a>,
+        cache: &mut dyn DynCache<'a, O>,
+    ) -> Pakerat<(Input<'a>,())> {
+    match self.inner.parse(input,cache) {
+        Ok((_,err)) => Err(PakeratError::Regular(err)),
+        Err(PakeratError::Regular(_)) => Ok((input,())),
+        Err(e)=> Err(e),
+    }
+
+}
+}
