@@ -435,7 +435,7 @@ use crate::combinator::Combinator;
         assert_eq!(result, 3 + 4 * (2 + 5)); // Ensure correct parsing
         
 
-        let tokens = "3 + ".parse().unwrap();
+        let tokens = "+ 3 + 3".parse().unwrap();
         let buffer = TokenBuffer::new2(tokens);
         let input = Input::new(&buffer);
         

@@ -57,7 +57,7 @@
 //!         IntParser.map(ParsedValue::Number), ParserType::Number.into(), "infinite loop bug")
 //! );
 //!
-//! let tokens = "variable 42".parse().unwrap();
+//! let tokens = "aaa 42".parse().unwrap();
 //! let buffer = TokenBuffer::new2(tokens);
 //! let input = Input::new(&buffer);
 //!
@@ -70,12 +70,18 @@
 //! // Parse the next token (number) and store it in the cache
 //! let (_, parsed_number) = combined_parser.parse(input, &mut cache).unwrap();
 //! assert!(matches!(parsed_number, ParsedValue::Number(_)));
+//! 
+//! //now we trick the cache by making something with the same byte range
+//! let tokens = "333 42".parse().unwrap();
+//! let buffer = TokenBuffer::new2(tokens);
+//! let input = Input::new(&buffer);
 //!
 //! // Parsing again should retrieve from the cache
-//! let (_, cached_ident) = combined_parser.parse(Input::empty(), &mut cache).unwrap();
+//! let (_, cached_ident) = combined_parser.parse(input, &mut cache).unwrap();
 //! assert!(matches!(cached_ident, ParsedValue::Ident(_)));
 //! ```
 
+use std::ops::Range;
 use crate::core::Found;
 use std::fmt;
 use crate::combinator::Parsable;
@@ -329,6 +335,7 @@ where
     }
 }
 
+
 /// A `Cache` is meant to be used with [`Combinator`].
 ///
 /// Caching guarantees linear time complexity in all public APIs (including recursive ones).
@@ -345,7 +352,7 @@ where
     type Item: CacheSpot<'a, T>;
 
     /// Retrieves the cache for the byte anotated by slot
-    fn get_slot(&mut self, slot: usize) -> &mut Self::Item;
+    fn get_slot(&mut self, slot: Range<usize>) -> &mut Self::Item;
 }
 
 #[derive(Debug)]
@@ -357,8 +364,8 @@ pub struct DebugCache<'a,C,T=()> where T:Parsable,T::Output<'a>: Clone,C : Cache
 impl<'a,T,C> Cache<'a,T> for DebugCache<'a,C,T> where T:Parsable,T::Output<'a>: Clone,C : Cache<'a,T>{
 type Item = C::Item;
 
-fn get_slot(&mut self, id: usize) -> &mut <Self as Cache<'a, T>>::Item {
-    println!("getting slot {}",id);
+fn get_slot(&mut self, id: Range<usize>) -> &mut <Self as Cache<'a, T>>::Item {
+    println!("getting slot {:?}",id);
     self.inner.get_slot(id)
 }
 }
@@ -372,14 +379,14 @@ impl<'a,T,C>  DebugCache<'a,C,T> where T:Parsable,T::Output<'a>: Clone,C : Cache
 ///A dynamic runtime cache derived from [`Cache`]
 pub trait DynCache<'a, T = ()> {
     /// Retrieves the cache for the byte anotated by slot
-    fn get_dyn_slot(&mut self, slot: usize) -> &mut dyn CacheSpot<'a, T>;
+    fn get_dyn_slot(&mut self, slot: Range<usize>) -> &mut dyn CacheSpot<'a, T>;
 }
 
 impl<'a, T: Parsable, C: Cache<'a, T>> DynCache<'a, T> for C
 where
     T::Output<'a>: Clone,
 {
-    fn get_dyn_slot(&mut self, slot: usize) -> &mut dyn CacheSpot<'a, T> {
+    fn get_dyn_slot(&mut self, slot: Range<usize>) -> &mut dyn CacheSpot<'a, T> {
         self.get_slot(slot) // Automatically converts to `dyn CacheSpot`
     }
 }
@@ -407,8 +414,8 @@ where
     P: Combinator<T, T> + ?Sized,
     FE: FnOnce() -> ParseError,
 {
-    let id = input.span().byte_range().start;
-    let spot = cache.get_dyn_slot(id).get(key).expect("missing key");
+    let id = input.span().byte_range();
+    let spot = cache.get_dyn_slot(id.clone()).get(key).expect("missing key");
     match &spot.0 {
         CacheStatus::Full(res) => res.clone(),
         CacheStatus::Empty => {
@@ -462,52 +469,59 @@ where
 // 	}
 // }
 
-impl<'a, T: Parsable, C> Cache<'a, T> for HashMap<usize, C>
+impl<'a, T: Parsable, C> Cache<'a, T> for HashMap<Range<usize>, C>
 where
     C: CacheSpot<'a, T> + Default,
     <T as Parsable>::Output<'a>: Clone,
 {
     type Item = C;
-    fn get_slot(&mut self, slot: usize) -> &mut C {
+    fn get_slot(&mut self, slot: Range<usize>) -> &mut C {
         self.entry(slot).or_default()
     }
 }
 
 /// this cache is fairly performent, it relies on knowing the number of parse rules ahead of time
-pub type BasicCache<'a, const L: usize, T = ()> = HashMap<usize, ArrayCache<'a, L, T>>;
+pub type BasicCache<'a, const L: usize, T = ()> = HashMap<Range<usize>, ArrayCache<'a, L, T>>;
 /// this cache can work with any id range.
-pub type FlexibleCache<'a, T = ()> = HashMap<usize, HashCache<'a, T>>;
+pub type FlexibleCache<'a, T = ()> = HashMap<Range<usize>, HashCache<'a, T>>;
 
 /// A combinator that caches the results of an inner parser.
 ///
 /// This allows detecting infinite loops and excuting in linear time. 
 /// see [`Cache`] and [`parse_cached`] for details.
 ///
-/// ## Example Usage
-/// ### Using `CachedComb`
-/// ```rust
+/// # Example
+/// ```
 /// use pakerat_combinators::combinator::Combinator;
 /// use pakerat_combinators::basic_parsers::IdentParser;
 /// use pakerat_combinators::core::Input;
-/// use pakerat_combinators::cache::CachedComb;
-/// use pakerat_combinators::cache::FlexibleCache;
-/// use syn::buffer::{TokenBuffer};
+/// use pakerat_combinators::cache::{CachedComb, BasicCache, CacheStatus};
+/// use proc_macro2::Ident;
+/// use syn::buffer::TokenBuffer;
 ///
-/// let tokens = "cached_var".parse().unwrap();
+/// // --- Step 1: Parse an identifier and cache it ---
+/// let tokens = "aaa".parse().unwrap();
 /// let buffer = TokenBuffer::new2(tokens);
 /// let input = Input::new(&buffer);
 ///
-/// let my_parser = CachedComb::new(IdentParser, 0, "Cache miss error");
+/// let mut cache = BasicCache::<1,Ident>::new();
+/// let ident_parser = CachedComb::new(IdentParser, 0, "infinite loop bug");
 ///
-/// let mut cache = FlexibleCache::<_>::default();
-/// let (_, parsed_ident) = my_parser.parse(input, &mut cache).unwrap();
+/// // Parse the identifier and store it in the cache
+/// let (_, parsed_ident) = ident_parser.parse(input, &mut cache).unwrap();
+/// assert_eq!(parsed_ident.to_string(), "aaa");
 ///
-/// assert_eq!(parsed_ident.to_string(), "cached_var");
+/// // --- Step 2: Trick the cache by using the same byte range ---
+/// let tokens = "333".parse().unwrap();
+/// let buffer = TokenBuffer::new2(tokens);
+/// let input = Input::new(&buffer);
 ///
 /// // Parsing again should retrieve from the cache
-/// let (_, cached_ident) = my_parser.parse(Input::empty(), &mut cache).unwrap();
-/// assert_eq!(cached_ident.to_string(), "cached_var");
-/// ```
+/// let (_, cached_ident) = ident_parser.parse(input, &mut cache).unwrap();
+/// assert_eq!(cached_ident.to_string(), "aaa"); // Cache returned the old entry
+///
+///```
+
 pub struct CachedComb<INNER, T = ()>
 where
     INNER: Combinator<T, T>,

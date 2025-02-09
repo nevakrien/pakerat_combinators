@@ -28,7 +28,7 @@ impl<T:Parsable,O:Parsable,INNER:Combinator<T,O>> Combinator<T,O> for DebugComb<
         input: Input<'a>,
         cache: &mut dyn DynCache<'a, O>,
     ) -> Pakerat<(Input<'a>, T::Output<'a>)> {
-        println!("calling {} with {:?}",self.name,input.span());
+        println!("calling {} with {:?} range:{:?}",self.name,input.span(),input.span().byte_range());
         self.inner.parse(input,cache)
     }
 
@@ -37,7 +37,7 @@ impl<T:Parsable,O:Parsable,INNER:Combinator<T,O>> Combinator<T,O> for DebugComb<
         input: Input<'a>,
         cache: &mut dyn DynCache<'a, O>,
     ) -> Pakerat<Input<'a>> {
-        println!("calling {} with {:?}",self.name,input.span());
+        println!("calling {} with {:?} range:{:?}",self.name,input.span(),input.span().byte_range());
         self.inner.parse_ignore(input,cache)
 
     }
@@ -602,7 +602,7 @@ where
 
 /// A parser that recognizes a portion of the input and returns it as an `Input`.
 ///
-/// **WARNING**: using the same cache with a recognize input can be somewhat dobious. the cache is keyed by the first byte so a truncated input is treated as the same as its parent.
+/// **WARNING**: using recognize wrong can lead to quadratic time complexity so be careful
 ///
 /// This is useful for separating recognition from validation. For example,
 /// you can extract a sequence of tokens and later process them separately,
