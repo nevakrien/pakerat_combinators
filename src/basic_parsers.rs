@@ -190,6 +190,17 @@ define_parser!(
 );
 define_parser!(LifetimeParser, Lifetime, lifetime, "a lifetime");
 
+///this combinator just returns the input
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Nothing;
+impl<O:Parsable> Combinator<(),O> for Nothing{
+ fn parse<'a>(
+        &self,
+        input: Input<'a>,
+        _state: &mut dyn DynCache<'a, O>,
+    ) -> Pakerat<(Input<'a>, ())> {Ok((input,()))}   
+}
+
 /// parses a specific char that can be in [`Punct`]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SpecificPunct(pub char);

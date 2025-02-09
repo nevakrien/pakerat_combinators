@@ -11,6 +11,44 @@ use crate::core::ParseError;
 
 use std::marker::PhantomData;
 
+///this combinator prints stuff for debuging
+pub struct DebugComb<INNER,Out,Cach> where
+    INNER: Combinator<Out,Cach>,
+    Cach: Parsable,
+    Out: Parsable,
+{   
+    pub name:&'static str,
+    pub inner: INNER,
+    pub _phantom: PhantomData<(Out, Cach)>,
+}
+
+impl<T:Parsable,O:Parsable,INNER:Combinator<T,O>> Combinator<T,O> for DebugComb<INNER,T,O>{
+        fn parse<'a>(
+        &self,
+        input: Input<'a>,
+        cache: &mut dyn DynCache<'a, O>,
+    ) -> Pakerat<(Input<'a>, T::Output<'a>)> {
+        println!("calling {} with {:?}",self.name,input.span());
+        self.inner.parse(input,cache)
+    }
+
+    fn parse_ignore<'a>(
+        &self,
+        input: Input<'a>,
+        cache: &mut dyn DynCache<'a, O>,
+    ) -> Pakerat<Input<'a>> {
+        println!("calling {} with {:?}",self.name,input.span());
+        self.inner.parse_ignore(input,cache)
+
+    }
+}
+
+impl<T:Parsable,O:Parsable,INNER:Combinator<T,O>>  DebugComb<INNER,T,O>{
+    pub fn new(name:&'static str,inner:INNER) -> Self{
+        Self{inner,name,_phantom:PhantomData}
+    }
+}
+
 /// This struct runs WRAPPER then runs INNER on the returned [`Input`], expecting all the input to be consumed.
 /// It is mainly used for delimiter with delimiters as a way to parse "{something}"
 ///
@@ -563,6 +601,8 @@ where
 }
 
 /// A parser that recognizes a portion of the input and returns it as an `Input`.
+///
+/// **WARNING**: using the same cache with a recognize input can be somewhat dobious. the cache is keyed by the first byte so a truncated input is treated as the same as its parent.
 ///
 /// This is useful for separating recognition from validation. For example,
 /// you can extract a sequence of tokens and later process them separately,

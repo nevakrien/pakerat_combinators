@@ -433,5 +433,14 @@ use crate::combinator::Combinator;
         
         let (_, result) = expr_parser.parse(input, &mut cache).unwrap();
         assert_eq!(result, 3 + 4 * (2 + 5)); // Ensure correct parsing
+        
+
+        let tokens = "3 + ".parse().unwrap();
+        let buffer = TokenBuffer::new2(tokens);
+        let input = Input::new(&buffer);
+        
+        let mut cache = BasicCache::<2,i64>::new();
+        expr_parser.parse(input, &mut cache).map(|(_,x)| x).unwrap_err();
+
     }
 }

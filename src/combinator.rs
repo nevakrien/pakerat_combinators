@@ -608,6 +608,8 @@ pub trait CombinatorExt<T: Parsable = (), O: Parsable = T>: Combinator<T, O> {
     
     /// Runs this parser, returning the consumed tokens as an [`Input`] as well as the rest of the stream.
     ///
+    /// **WARNING**: using the same cache with a recognize input can be somewhat dobious. the cache is keyed by the first byte so a truncated input is treated as the same as its parent.
+    ///
     /// This is useful for splitting parsing into distinct stages.
     /// The recognized input can then be passed to another parser for further processing.
     ///

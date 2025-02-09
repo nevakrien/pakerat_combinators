@@ -76,6 +76,8 @@
 //! assert!(matches!(cached_ident, ParsedValue::Ident(_)));
 //! ```
 
+use crate::core::Found;
+use std::fmt;
 use crate::combinator::Parsable;
 use crate::combinator::Combinator;
 use crate::combinator::Pakerat;
@@ -169,6 +171,28 @@ pub struct CacheEntry<'a, T: Parsable = ()>(
     pub CacheStatus<Pakerat<(Input<'a>, T::Output<'a>)>>,
 );
 
+impl<'a, T: Parsable> fmt::Debug for CacheEntry<'a, T> where <T as Parsable>::Output<'a>: Debug{
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result  {
+        match &self.0 {
+            CacheStatus::Full(pakerat) => {
+                match pakerat {
+                    Ok((input, output)) => write!(
+                        f,
+                        "CacheEntry::Full {{ start_token: {:?}, source_text: {:?}, output: {:?} }}",
+                        Found::start_of(*input),
+                        input.span().source_text(),
+                        output
+                    ),
+                    Err(err) => write!(f, "CacheEntry::Full {{ error: {:?} }}", err),
+                }
+            }
+            CacheStatus::Empty => write!(f, "CacheEntry::Empty"),
+            CacheStatus::Pending => write!(f, "CacheEntry::Pending"),
+        }
+    }
+}
+
+
 impl<T: Parsable> Default for CacheEntry<'_, T> {
     fn default() -> Self {
         CacheEntry(CacheStatus::default())
@@ -212,6 +236,7 @@ where
         &mut self,
         err_f: F,
     ) -> Pakerat<(Input<'a>, T::Output<'a>)> {
+        // panic!("this is the bug");
         match &self.0 {
             CacheStatus::Empty => unreachable!("bad finalize call on an empty cache"),
             CacheStatus::Pending => {
@@ -323,6 +348,27 @@ where
     fn get_slot(&mut self, slot: usize) -> &mut Self::Item;
 }
 
+#[derive(Debug)]
+pub struct DebugCache<'a,C,T=()> where T:Parsable,T::Output<'a>: Clone,C : Cache<'a,T>{
+    pub inner:C,
+    pub _phantom:PhantomData<(T,Input<'a>)>
+}
+
+impl<'a,T,C> Cache<'a,T> for DebugCache<'a,C,T> where T:Parsable,T::Output<'a>: Clone,C : Cache<'a,T>{
+type Item = C::Item;
+
+fn get_slot(&mut self, id: usize) -> &mut <Self as Cache<'a, T>>::Item {
+    println!("getting slot {}",id);
+    self.inner.get_slot(id)
+}
+}
+
+impl<'a,T,C>  DebugCache<'a,C,T> where T:Parsable,T::Output<'a>: Clone,C : Cache<'a,T>{
+    pub fn new(inner:C) -> Self{
+        Self{inner,_phantom:PhantomData}
+    }
+}
+
 ///A dynamic runtime cache derived from [`Cache`]
 pub trait DynCache<'a, T = ()> {
     /// Retrieves the cache for the byte anotated by slot
@@ -337,6 +383,8 @@ where
         self.get_slot(slot) // Automatically converts to `dyn CacheSpot`
     }
 }
+
+
 
 /// this function implements caching which will never break any valid peg parser and will never return wrong results.
 ///

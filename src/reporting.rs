@@ -620,3 +620,117 @@ where
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::multi::OrLast;
+use crate::cache::DebugCache;
+use crate::multi::DebugComb;
+use crate::reporting::Pakerat;
+use crate::reporting::DynCache;
+use crate::reporting::CheckError;
+use crate::combinator::Combinator;
+use crate::basic_parsers::{IntParser, SpecificPunct, Nothing};
+    use crate::cache::{BasicCache, CachedComb};
+    use crate::combinator::{CombinatorExt, PakeratError};
+    use crate::multi::{Ignore, Pair, Skip, Recognize};
+    use crate::one_of_last;
+    use crate::recursive::OwnedRecursiveParser;
+    use crate::reporting::{Mismatch, ParseError};
+    use crate::reporting::Found;
+    use crate::reporting::Expected;
+    use crate::core::Input;
+    use syn::buffer::TokenBuffer;
+
+    #[test]
+    fn plus_test() {
+
+        // --- Build the valid arithmetic parser ---
+        // This parser supports addition with the grammar:
+        //     expr = int | int '+' expr
+        // It is built recursively using an OwnedRecursiveParser.
+        let basic_num = DebugComb::new("basic_num",OwnedRecursiveParser::new()).leak();
+        basic_num.inner.inner.set(
+            // DebugComb::new("cache",CachedComb::new(
+               DebugComb::new("or",OrLast::new(
+                    // Pattern: int '+' expr  => compute lhs + rhs
+                    DebugComb::new("map",
+                    DebugComb::new("pair",Pair::new(
+                        DebugComb::new("left int",IntParser),
+                        DebugComb::new("+ int",
+                            Pair::new(
+                                DebugComb::new("+",SpecificPunct('+')), 
+                                DebugComb::new("right recurse",basic_num))
+                            )
+                    ))
+                    .map(|(lhs, (_, rhs))| lhs + rhs)
+                    ),
+                    // Pattern: int alone
+                     DebugComb::new("fallback",IntParser)
+                // )),
+                // 0,
+                // "infinite loop in basic_num"
+            ))
+        );
+
+        // --- Build an error-checker for the pattern "int +"
+        // This catches the case where an expression is followed by a '+' with no integer afterwards.
+        let missing_right = Skip::new(
+            Ignore::new(
+                Pair::new(
+                    Ignore::new(basic_num),
+                    Ignore::new(SpecificPunct('+'))
+                )
+            ),
+            Recognize::new(Nothing)
+        )
+            .map(|recognized_input| {
+                ParseError::Simple(
+                    Mismatch {
+                        actual: Found::start_of(recognized_input),
+                        expected: Expected::Text("an int")
+                    }
+                )
+            });
+
+        // --- Combine valid parsing with error reporting ---
+        // If the valid parser (basic_num) fails, missing_right is run to produce a more detailed error.
+        let unified_parser = Skip::new(CheckError::new(missing_right),basic_num);
+
+        // Create a cache for integer results. The cache key here is 1.
+        let mut cache = BasicCache::<1, i64>::new();
+
+        // --- Run a valid example ---
+        let tokens_valid = "1+2+3".parse().expect("Tokenization failed");
+        let buffer_valid = TokenBuffer::new2(tokens_valid);
+        let input_valid = Input::new(&buffer_valid);
+        let (remaining_valid, result) = unified_parser.parse(input_valid, &mut cache)
+            .expect("Valid input should parse");
+        // Ensure that all tokens are consumed and the result is as expected.
+        assert!(remaining_valid.eof());
+        assert_eq!(result, 1 + 2 + 3);
+
+        // --- Run an invalid example: "1+" ---
+        let mut cache = DebugCache::new(BasicCache::<1, i64>::new());
+
+        let tokens_invalid = "1+".parse().expect("Tokenization failed");
+        let buffer_invalid = TokenBuffer::new2(tokens_invalid);
+        let input_invalid = Input::new(&buffer_invalid);
+        let err = unified_parser.parse(input_invalid, &mut cache);
+
+        let err = err.map(|(x,_)| Found::start_of(x))
+            .expect_err("Invalid input should produce an error");
+
+        // Check that the error is a simple mismatch error reporting a missing integer.
+        match err {
+            PakeratError::Regular(ParseError::Simple(mismatch)) => {
+                // Print out the found token (the offending '+' or its span) using its Display implementation.
+                println!("Mismatch error found: actual: {}", mismatch.actual);
+                // // Assert that the "found" text (converted to a string) contains the '+' character.
+                // assert!(format!("{}", mismatch.actual).contains("+"),
+                //         "Expected the found token to contain '+', got: {}", mismatch);
+            },
+            _ => panic!("Expected a simple mismatch error for missing integer after '+'"),
+        }
+    }
+}
