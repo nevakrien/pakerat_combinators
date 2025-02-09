@@ -355,6 +355,80 @@ where
     }
 }
 
+/// A combinator that aggregates multiple errors into a single [`ParseError::Multi`] variant.
+///
+/// This is useful when a parser can produce multiple distinct errors, and you want to collect
+/// all of them rather than failing on the first one encountered. It allows you to provide
+/// more comprehensive error messages by returning a list of errors rather than a single failure.
+///
+/// This combinator expects its inner parser to return `Vec<ParseError>` if this is an issue just call map instead.
+///
+/// # Example
+///
+/// ```rust
+/// use pakerat_combinators::combinator::{Combinator,CombinatorExt, PakeratError};
+/// use pakerat_combinators::cache::BasicCache;
+/// use pakerat_combinators::core::{Input, ParseError};
+/// use pakerat_combinators::reporting::{MultiError,ParseReport};
+/// use pakerat_combinators::basic_parsers::{IdentParser,AnyParser};
+/// use pakerat_combinators::multi::{Many1,Skip,Pair};
+/// use syn::buffer::TokenBuffer;
+///
+/// let tokens = "1 &".parse().unwrap();
+/// let buffer = TokenBuffer::new2(tokens);
+/// let input = Input::new(&buffer);
+/// let mut cache = BasicCache::<0>::new();
+/// 
+/// //find all non idents
+/// let error_aggregator = MultiError::new(
+///     Many1::new(
+///         Pair::new(
+///             ParseReport::new(IdentParser),
+///             AnyParser
+///         ).map(|(a, _)| a)
+///     )
+/// );
+/// let (_,error) = error_aggregator.parse(input,&mut cache).unwrap();
+/// assert!(matches!(error,ParseError::Multi(v)));
+/// ```
+///
+pub struct MultiError<INNER,O> 
+where INNER:Combinator<Vec<ParseError>,O>,O:Parsable
+{
+    pub inner: INNER,
+    pub _phantom: PhantomData<O>,
+}
+
+impl<INNER,O> Combinator<ParseError,O> for MultiError<INNER,O>
+where INNER:Combinator<Vec<ParseError>,O>,O:Parsable{
+fn parse<'a>(
+        &self,
+        input: Input<'a>,
+        cache: &mut dyn DynCache<'a, O>,
+    ) -> Pakerat<(Input<'a>,ParseError)> {
+        let (next,vec) = self.inner.parse(input,cache)?;
+        Ok((next,ParseError::Multi(vec.into())))
+    }
+fn parse_ignore<'a>(
+        &self,
+        input: Input<'a>,
+        cache: &mut dyn DynCache<'a, O>,
+    ) -> Pakerat<Input<'a>> {
+        self.inner.parse_ignore(input,cache)
+}
+}
+
+
+
+
+impl<INNER,O> MultiError<INNER,O> 
+where INNER:Combinator<Vec<ParseError>,O>,O:Parsable
+{
+    pub fn new(inner:INNER) -> Self{
+        Self{inner,_phantom:PhantomData}
+    }
+}
+
 /// Inverted parser that raises errors on inner successes.
 ///
 /// If the inner parser returns `Ok((_, err))`, its error is raised as a failure.
@@ -418,6 +492,13 @@ fn parse<'a>(
 }
 }
 
+impl<INNER,O> CheckError<INNER,O> 
+where INNER:Combinator<ParseError,O>,O:Parsable
+{
+    pub fn new(inner:INNER) -> Self{
+        Self{inner,_phantom:PhantomData}
+    }
+}
 
 /// Improves the error of its inner parser by running an alternative error parser when the inner parser fails.
 ///

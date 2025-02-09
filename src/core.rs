@@ -179,6 +179,8 @@ pub enum ParseError {
     Message(Span, &'static str),
     OwnedMessage(Span, Rc<str>),
     Syn(Rc<syn::Error>),
+
+    Multi(Rc<[ParseError]>),
 }
 
 impl crate::combinator::Parsable for ParseError{
@@ -195,6 +197,13 @@ impl Display for ParseError {
             ParseError::Message(_, message) => message.fmt(f),
             ParseError::OwnedMessage(_, message) => message.fmt(f),
             ParseError::Syn(x) => x.fmt(f),
+            ParseError::Multi(v) => {
+                write!(f, "\nmultiple errors found:\n\n")?;
+                for e in v.iter(){
+                    write!(f, "{}\n\n",e)?
+                }
+                Ok(())
+            },
         }
     }
 }
@@ -210,7 +219,15 @@ impl From<ParseError> for syn::Error {
             ParseError::Simple(mismatch) => mismatch.into(), // Uses Mismatch's Into<syn::Error>
             ParseError::Message(span, message) => syn::Error::new(span, message),
             ParseError::OwnedMessage(span, message) => syn::Error::new(span, message),
-            ParseError::Syn(rc) => (*rc).clone(), // Already a syn::Error
+            ParseError::Syn(rc) => (*rc).clone(),// Already a syn::Error
+            ParseError::Multi(v) => {
+                let mut error : syn::Error= v.get(0).map(|x| x.clone().into()).unwrap_or(ParseError::Empty.into());
+                for e in v[1..].iter(){
+                    let s : syn::Error= e.clone().into();
+                    error.combine(s);
+                }
+                error
+            }, 
         }
     }
 }

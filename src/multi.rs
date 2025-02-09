@@ -11,9 +11,12 @@ use crate::core::ParseError;
 
 use std::marker::PhantomData;
 
-///this struct is mainly used for delimiter with delimiters as a way to parse "{something}"
+/// This struct runs WRAPPER then runs INNER on the returned [`Input`], expecting all the input to be consumed.
+/// It is mainly used for delimiter with delimiters as a way to parse "{something}"
 ///
-///it can also be used to remove a prefix but thats about it
+/// Note that the returned input does not need to be static. 
+/// It just need to match lifetimes with the cache. see [`Parsable`] for more details. 
+/// 
 ///
 /// # Example Usage
 /// ```rust
@@ -116,6 +119,98 @@ where
         }
     }
 }
+
+/// This struct runs SKIP then runs INNER on the rest of the [`Input`].
+/// 
+///
+/// # Example Usage
+/// ```rust
+/// use proc_macro2::Delimiter;
+/// use pakerat_combinators::basic_parsers::{DelParser, IdentParser};
+/// use pakerat_combinators::multi::{Skip,Ignore};
+/// use pakerat_combinators::combinator::Combinator;
+/// use pakerat_combinators::cache::BasicCache;
+/// use pakerat_combinators::core::Input;
+/// use syn::buffer::TokenBuffer;
+/// use std::marker::PhantomData;
+///
+/// let tokens = "{} my_var".parse().unwrap();
+/// let buffer = TokenBuffer::new2(tokens);
+/// let input = Input::new(&buffer);
+///
+///
+/// let my_parser = Skip {
+///     skiper: Ignore::new(DelParser(Delimiter::Brace)),
+///     inner: IdentParser,
+///     _phantom: PhantomData,
+/// };
+///
+/// let mut cache  = BasicCache::<0>::new();
+/// let (_, parsed_ident) = my_parser.parse(input, &mut cache).unwrap();
+/// assert_eq!(parsed_ident.to_string(), "my_var");
+/// ```
+pub struct Skip<INNER, SKIP, T: Parsable = (), O = T>
+where
+    INNER: Combinator<T, O>,
+    //'static resolves like Input<'_>
+    SKIP: Combinator<(), O>,
+
+    O: Parsable,
+{
+    ///finds the start for the inside parser
+    pub skiper: SKIP,
+    ///main parser that returns the final output
+    pub inner: INNER,
+    ///used so we can have generics
+    pub _phantom: PhantomData<(T, O)>,
+}
+
+impl<INNER, SKIP, T, O> Combinator<T, O> for Skip<INNER, SKIP, T, O>
+where
+    SKIP: Combinator<(), O>,
+    INNER: Combinator<T, O>,
+    O: Parsable,
+    T: Parsable,
+{
+    fn parse<'a>(
+        &self,
+        input: Input<'a>,
+        cache: &mut dyn DynCache<'a, O>,
+    ) -> Pakerat<(Input<'a>, T::Output<'a>)> {
+        let input = self.skiper.parse_ignore(input, cache)?;
+        let (next, final_result) = self.inner.parse(input, cache)?;
+
+        Ok((next, final_result))
+    }
+
+    fn parse_ignore<'a>(
+        &self,
+        input: Input<'a>,
+        cache: &mut dyn DynCache<'a, O>,
+    ) -> Pakerat<Input<'a>> {
+        let input = self.skiper.parse_ignore(input, cache)?;
+        let next = self.inner.parse_ignore(input, cache)?;
+
+        Ok(next)
+    }
+}
+
+impl<INNER, SKIP, T, O> Skip<INNER, SKIP, T, O>
+where
+    SKIP: Combinator<(), O>,
+    INNER: Combinator<T, O>,
+    O: Parsable,
+    T: Parsable,
+{
+    pub fn new(skiper: SKIP, inner: INNER) -> Self {
+        Self {
+            skiper,
+            inner,
+            _phantom: PhantomData,
+        }
+    }
+}
+
 
 /// This struct attempts to parse an optional occurrence of an inner parser.
 ///

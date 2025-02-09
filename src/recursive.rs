@@ -1,3 +1,112 @@
+//! This module exposes parsers ([`RecursiveParser`] and [`OwnedRecursiveParser`]) that can be passed around before they are fully defined.
+//! The idea is to allow for self-referential parsers, enabling them to refer to themselves
+//! before they are fully initialized. 
+//!
+//! However, this recursion can fundamentally cause infinite loops, so it is generally
+//! a good idea to use caching to prevent this and guarantee linear time complexity.
+//!
+//! Most interesting parsers usually have at least one recursive element, as many grammars
+//! inherently contain nested structures. Recursive parsers enable handling constructs like
+//! expressions, nested blocks, and complex syntactic forms.
+//!
+//! # Example Usage:
+//!
+//! Parsing arithmetic expressions with `+`, `*`, and `()`.
+//!
+//! ## Parsing Rules:
+//! ```text
+//! (num) => num
+//! add_num * num => num
+//! add_num => num
+//! int + num => add_num
+//! int => add_num
+//! ```
+//!
+//! ## Example Code:
+//!
+//! ```rust
+//! use pakerat_combinators::{
+//!     one_of_last,
+//!     basic_parsers::{DelParser, IntParser, SpecificPunct},
+//!     combinator::{Combinator, CombinatorExt},
+//!     core::Input,
+//!     cache::{CachedComb, BasicCache},
+//!     multi::{Pair, Wrapped},
+//!     recursive::RecursiveParser
+//! };
+//! use proc_macro2::Delimiter;
+//! use syn::buffer::TokenBuffer;
+//!
+//! let tokens = "3 + 4 * (2 + 5)".parse().unwrap();
+//! let buffer = TokenBuffer::new2(tokens);
+//! let input = Input::new(&buffer);
+//!
+//! let mut cache = BasicCache::<2, i64>::new(); // Cache size of 2 for `num` and `add_num`
+//!
+//! let expr_parser = RecursiveParser::new();
+//! let add_num_parser = RecursiveParser::new();
+//!
+//! // Define `add_num`
+//! let add_num_parser_holder = CachedComb::new(
+//!     one_of_last!(
+//!         // int + num => add_num
+//!         Pair::new(IntParser, Pair::new(SpecificPunct('+'), expr_parser.as_ref()))
+//!             .map(|(lhs, (_, rhs))| lhs + rhs),
+//!         // int => add_num
+//!         IntParser
+//!     ),
+//!     1,
+//!     "infinite loop bug"
+//! );
+//! add_num_parser.set(&add_num_parser_holder);
+//!
+//! // Define `expr`
+//! let expr_parser_holder = CachedComb::new(one_of_last!(
+//!     // (num) => num
+//!     Wrapped::new(
+//!         DelParser(Delimiter::Parenthesis),
+//!         expr_parser.as_ref()
+//!     ),
+//!     // add_num * num => num
+//!     Pair::new(add_num_parser.as_ref(), Pair::new(SpecificPunct('*'), expr_parser.as_ref()))
+//!         .map(|(lhs, (_, rhs))| lhs * rhs),
+//!     
+//!     // add_num => num 
+//!     add_num_parser.as_ref()
+//! ),
+//! 0,
+//! "infinite loop bug"
+//! );
+//!
+//! expr_parser.set(&expr_parser_holder);
+//!
+//! let (_, result) = expr_parser.parse(input, &mut cache).unwrap();
+//! assert_eq!(result, 3 + 4 * (2 + 5)); // sanity check
+//! ```
+//!
+//! ## Avoiding Left Recursion
+//!
+//! When defining a recursive grammar, it is important to avoid left recursion. 
+//! Left recursion occurs when a rule calls itself as its first element, leading to an infinite loop.
+//!
+//! **Example of Left Recursion (Bad)**
+//! ```text
+//! expr => expr + term
+//! term => factor
+//! ```
+//! The above rule will **never terminate** because `expr` immediately calls `expr` again.
+//!
+//! **Fixed Version (Good)**
+//! ```text
+//! expr => term + expr
+//! term => factor
+//! ```
+//! This ensures recursion happens at a later point in the rule, avoiding infinite recursion.
+//! If you are **caching** recursive parsers (as you should be), 
+//! the caching layer should catch and report infinite loops.
+
+
+
 use crate::cache::DynCache;
 use crate::combinator::Parsable;
 use crate::combinator::Combinator;
@@ -11,8 +120,8 @@ use std::marker::PhantomData;
 /// `RecursiveParser` enables defining self-referential parsing rules in a safe manner.
 /// It uses [`OnceCell`] to lazily store and resolve the actual parser.
 ///
-/// Note that the lifetime requirement can be a bit annoying, so using an arena allocator is a good idea.
-/// See [`typed-arena`](https://crates.io/crates/typed-arena) and [`erased-type-arena`](https://crates.io/crates/erased-type-arena).
+/// Note that the lifetime requirement can be a bit annoying, so using an [`leaking`](crate::combinator::CombinatorExt) or using an arena allocator is a good idea.
+/// See [`typed-arena`](https://crates.io/crates/typed-arena) for a good arena implementation.
 ///
 /// # Example
 /// ```rust
@@ -32,22 +141,22 @@ use std::marker::PhantomData;
 /// let input = Input::new(&buffer);
 ///
 /// // Define the recursive parser
-/// let parser = RecursiveParser::new();
+/// let parser = RecursiveParser::new().leak();
 ///
 /// let terminal_parser = one_of!("expected it or ident",
 ///     Ignore::new(IdentParser),
 ///     Ignore::new(IntParser),
-///  );
+///  ).leak();
 ///
 /// // Define an actual expression parser using the recursive reference.
 /// let expr_parser = one_of!("expected an expression",
-///     Ignore::new(Wrapped::new(AnyDelParser,parser.as_ref())),
-///     Ignore::new(Pair::new(terminal_parser.as_ref(),Pair::new(PunctParser, parser.as_ref()))),
-///     terminal_parser.as_ref()
+///     Ignore::new(Wrapped::new(AnyDelParser,parser)),
+///     Ignore::new(Pair::new(terminal_parser,Pair::new(PunctParser, parser))),
+///     terminal_parser
 /// );
 ///
 /// // Initialize the recursive parser
-/// parser.set(&expr_parser);
+/// parser.set(expr_parser.leak().inner);
 ///
 ///
 /// let mut cache = BasicCache::<0>::new();
