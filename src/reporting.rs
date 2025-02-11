@@ -810,90 +810,305 @@ use crate::basic_parsers::{IntParser, SpecificPunct, Nothing};
     }
 }
 
-// #[cfg(test)]
-// mod chatgpt_tests {
-//     use crate::combinator::Combinator;
-// use crate::basic_parsers::{IdentParser, IntParser, SpecificPunct, IsEOF};
-//     use crate::cache::BasicCache;
-//     use crate::combinator::{CombinatorExt, PakeratError};
-//     use crate::core::Input;
-//     use crate::multi::{Many0, Many1, Pair, Maybe, Skip, Ignore};
-//     use crate::reporting::{CheckError, ImproveError, MultiError, ParseForbiden, ParseReport};
-//     use syn::buffer::TokenBuffer;
-//     use proc_macro2::Ident;
+#[cfg(test)]
+mod bugged_code {
+    use crate::multi::SkipToEnd;
+use std::rc::Rc;
+    use crate::basic_parsers::{IdentParser, IntParser, SpecificPunct, IsEOF, AnyParser};
+    use crate::cache::{BasicCache, CachedComb};
+    use crate::combinator::{Combinator, CombinatorExt, PakeratError};
+    use crate::core::Input;
+    use crate::multi::{Maybe, Pair, Ignore, Many1, SkipTo};
+    use crate::reporting::{ImproveError, MultiError, ParseForbiden, ParseReport, Parsable};
+    use crate::recursive::RecursiveParser;
+    use crate::one_of_last;
+    use syn::buffer::TokenBuffer;
+    use proc_macro2::Ident;
+
+    /// A tree structure for holding parsed identifiers.
+    /// Each node has an identifier and an optional pointer (Rc) to the next node.
+    #[derive(Debug, Clone)]
+    struct IdentList {
+        ident: Ident,
+        next: Option<Rc<IdentList>>,
+    }
+
+    // We want our final output type to be Rc<IdentList>.
+    // Implement Parsable for Rc<IdentList> so that every cached combinator
+    // is expected to produce that type.
+    impl Parsable for Rc<IdentList> {
+        type Output<'a> = Rc<IdentList>;
+    }
+
+    #[test]
+    fn list_parser_with_error_recovery() {
+        // -----------------------------------------------------------
+        // 1) HAPPY BRANCH: Recursive parser for a comma‐separated list
+        // -----------------------------------------------------------
+        // Grammar: list = ident [ ',' list ]?
+        // Final output type: Rc<IdentList>
+
+        // (a) Create a RecursiveParser that will eventually return Rc<IdentList>.
+        let recursive_parser: RecursiveParser<Rc<IdentList>> = RecursiveParser::new();
+        let recursive_debug = crate::multi::DebugComb::new("main_recursive", recursive_parser);
+        // Wrap the recursive parser in a CachedComb (cache key 0).
+        let cached_list_parser =CachedComb::new(recursive_debug, 0, "ident_list recursion");
+
+        // (b) Define the recursive rule.
+        // We parse an identifier, then optionally a comma and a recursive call.
+        // The Maybe branch returns Option<(proc_macro2::Punct, Rc<IdentList>)>.
+        // We map that result to produce an Rc<IdentList>.
+        let list_rule = crate::multi::DebugComb::new(
+            "list_rule",
+            Pair::new(
+                crate::multi::DebugComb::new("parse_ident", IdentParser),
+                // Use Maybe directly; do not wrap this branch in its own CachedComb.
+                Maybe::new(
+                    Pair::new(SpecificPunct(','), cached_list_parser.as_ref())
+                )
+            )
+        )
+        .map(|(id, maybe_tail)| {
+            let next = maybe_tail.map(|(_, tail)| tail);
+            Rc::new(IdentList { ident: id, next })
+        });
     
-//     #[test]
-//     fn improved_list_parser_test() {
-//         // --- HAPPY CASE ---
-//         let happy_parser = Pair::new(
-//             Many1::new(
-//                 Pair::new(IdentParser, Maybe::new(SpecificPunct(',')))
-//             ),
-//             IsEOF,
-//         )
-//         .map(|(pairs, _)| {
-//             pairs.into_iter().map(|(id, _)| id).collect::<Vec<Ident>>()
-//         });
-        
-//         let diagnostic_inner = ParseReport::new(
-//             ImproveError::new(
-//                     IdentParser,
-//                     ParseForbiden::<_, _, ()>::new(IntParser, "forbidden integer usage")
-//                 )
-//             );
+        // (c) Initialize the recursive parser with the rule.
+        cached_list_parser.inner.inner.set(&list_rule);
+    
+        // (d) Enforce full input consumption by pairing with IsEOF.
+        let happy_branch = crate::multi::DebugComb::new(
+            "happy_branch",
+            Pair::new(
+                cached_list_parser.as_ref(),
+                crate::multi::DebugComb::new("check_eof", IsEOF)
+            )
+            .map(|(tree, _)| tree)
+        );
+    
+        // -----------------------------------------------------------
+        // 2) ERROR RECOVERY BRANCH
+        // -----------------------------------------------------------
+        //
+        // When the happy branch fails (for example, when an integer appears),
+        // we want to produce an aggregated diagnostic error.
+    
+        // diagnostic_inner: use ParseReport over ImproveError+ParseForbiden so that if IdentParser fails,
+        // an integer is flagged with "forbidden integer usage".
+        let diagnostic_inner = crate::multi::DebugComb::new(
+            "diagnostic_inner",
+            ParseReport::new(
+                ImproveError::new(
+                    IdentParser,
+                    ParseForbiden::<_, _, Rc<IdentList>>::new(IntParser, "forbidden integer usage")
+                )
+            )
+        );
+    
+        // skip_bad: consume tokens until a comma or EOF is reached.
+        let skip_bad = crate::multi::DebugComb::new(
+            "skip_bad",
+            SkipToEnd::new(
+                SpecificPunct(',')
+            )
+        );
+    
+        // Combine diagnostic_inner with skip_bad.
+        let diagnostic_branch = crate::multi::DebugComb::new(
+            "diagnostic_branch",
+            Pair::new(diagnostic_inner, skip_bad)
+            .map(|(diag, _)| diag)
+        );
+    
+        // skip_good: always consume at least one token.
+        // Try to ignore a valid identifier; if that fails, ignore any token.
+        let skip_good = crate::multi::DebugComb::new(
+            "skip_good",
+            one_of_last!(
+                Ignore::new(IdentParser),
+                Ignore::new(AnyParser)
+            )
+        );
+    
+        // recovery_element: skip_good, then diagnostic_branch, then skip_good.
+        let recovery_element = crate::multi::DebugComb::new(
+            "recovery_element",
+            Pair::new(
+                skip_good.as_ref(),
+                Pair::new(diagnostic_branch, skip_good.as_ref())
+            )
+            .map(|(_left, (err, _right))| err)
+        );
+    
+        // aggregated_recovery: gather one or more recovery elements into a MultiError.
+        let aggregated_recovery = crate::multi::DebugComb::new(
+            "aggregated_recovery",
+            MultiError::new(Many1::new(recovery_element))
+        );
+    
+        // -----------------------------------------------------------
+        // 3) UNIFIED PARSER: Combine HAPPY and ERROR branches.
+        // -----------------------------------------------------------
+        //
+        // Instead of a custom closure, we use ImproveError to try happy_branch first.
+        // If happy_branch fails, it runs aggregated_recovery and replaces the error.
+        let unified_parser = crate::multi::DebugComb::new(
+            "unified_parser",
+            ImproveError::new(happy_branch, aggregated_recovery)
+        );
 
-//         // We use a "skip_good" parser that consumes a valid list element (without allocating)
-//         // so that the error branch looks like: many0(skip_good) » diagnostic » many0(skip_good)
-//         let skip_good = Ignore::new(Maybe::new(
-//             Pair::new(
-//                 IdentParser,
-//                 Ignore::new(Many0::new(
-//                     Pair::new(SpecificPunct(','),IdentParser)
-//                 )
-//         ))));
+        // -----------------------------------------------------------
+        // 4) RUN TESTS
+        // -----------------------------------------------------------
+    
+        // Create a cache of size 3 (all cached combinators produce Rc<IdentList>).
+        let mut cache: BasicCache<3, Rc<IdentList>> = BasicCache::new();
+    
+        // VALID INPUT: "a, b, c"
+        let valid_input_str = "a, b, c";
+        let tokens_valid = valid_input_str.parse().expect("Tokenization failed");
+        let buffer_valid = TokenBuffer::new2(tokens_valid);
+        let input_valid = Input::new(&buffer_valid);
+    
+        match unified_parser.parse(input_valid, &mut cache) {
+            Ok((remaining, tree)) => {
+                assert!(remaining.eof());
+                println!("Parsed IdentList (valid): {:#?}", tree);
+            }
+            Err(e) => panic!("Expected success, got error: {}", e.inner()),
+        }
+    
+        // INVALID INPUT: "a, 123, c d, b,,"
+        let invalid_input_str = "a, 123, c d, b,,";
+        let tokens_invalid = invalid_input_str.parse().expect("Tokenization failed");
+        let buffer_invalid = TokenBuffer::new2(tokens_invalid);
+        let input_invalid = Input::new(&buffer_invalid);
+        let mut cache2: BasicCache<3, Rc<IdentList>> = BasicCache::new();
+    
+        match unified_parser.parse(input_invalid, &mut cache2) {
+            Ok((_, tree)) => {
+                panic!("Expected error recovery, but parsed: {:#?}", tree);
+            }
+            Err(PakeratError::Regular(err)) => {
+                println!("Got aggregated error (expected): {}", err);
+            }
+            Err(PakeratError::Recursive(err)) => panic!("Unexpected error variant: {}", err),
+        }
 
-//         let skip_bad = one_of_last!(
-//             Ignore::new(SpecificPunct(',')),//empty case
-//             Ignore::new(Pair::new(
-//                 Many0::new()
-//             ))
-//         );
+        // INVALID INPUT:
+        let invalid_input_str = ",,,,,";
+        let tokens_invalid = invalid_input_str.parse().expect("Tokenization failed");
+        let buffer_invalid = TokenBuffer::new2(tokens_invalid);
+        let input_invalid = Input::new(&buffer_invalid);
+        let mut cache2: BasicCache<3, Rc<IdentList>> = BasicCache::new();
+    
+        match unified_parser.parse(input_invalid, &mut cache2) {
+            Ok((_, tree)) => {
+                panic!("Expected error recovery, but parsed: {:#?}", tree);
+            }
+            Err(PakeratError::Regular(err)) => {
+                println!("Got aggregated error (expected): {}", err);
+            }
+            Err(PakeratError::Recursive(err)) => panic!("Unexpected error variant: {}", err),
+        }
 
-//         let recovery_element = Pair::new(
-//             skip_good.as_ref(),
-//             Pair::new(diagnostic_inner, skip_good.as_ref())
-//         )
-//         .map(|(_left, (err, _right))| err);
-//         let aggregated_recovery = MultiError::new(Many1::new(recovery_element));
-        
-//         // --- UNIFIED PARSER ---
-//         // The unified parser tries the happy case first.
-//         // If that fails, CheckError runs the error recovery branch.
-//         let unified_parser = Skip::new(
-//             CheckError::new(aggregated_recovery),
-//             happy_parser,
-//         );
-        
-//         // --- TEST ---
-//         // In this input:
-//         //   • "a" is a valid identifier.
-//         //   • "123" (an integer) should trigger the forbidden error.
-//         //   • "c d" (two tokens) is also invalid.
-//         //   • "b,," has an extra comma.
-//         let input_str = "a, 123, c d, b,,";
-//         let tokens = input_str.parse().expect("Tokenization failed");
-//         let buffer = TokenBuffer::new2(tokens);
-//         let input = Input::new(&buffer);
-//         let mut cache = BasicCache::<0, _>::new();
-        
-//         match unified_parser.parse(input, &mut cache) {
-//             Ok((_remaining, list)) => {
-//                 panic!("Expected errors, but parsed: {:?}", list);
-//             }
-//             Err(PakeratError::Regular(err)) => {
-//                 println!("Aggregated error:\n{:#?}", err);
-//             }
-//             Err(e) => panic!("Unexpected error: {:?}", e),
-//         }
-//     }
-// }
+        // INVALID INPUT:
+        let invalid_input_str = "a a,123";
+        let tokens_invalid = invalid_input_str.parse().expect("Tokenization failed");
+        let buffer_invalid = TokenBuffer::new2(tokens_invalid);
+        let input_invalid = Input::new(&buffer_invalid);
+        let mut cache2: BasicCache<3, Rc<IdentList>> = BasicCache::new();
+    
+        match unified_parser.parse(input_invalid, &mut cache2) {
+            Ok((_, tree)) => {
+                panic!("Expected error recovery, but parsed: {:#?}", tree);
+            }
+            Err(PakeratError::Regular(err)) => {
+                println!("Got aggregated error (expected): {}", err);
+            }
+            Err(PakeratError::Recursive(err)) => panic!("Unexpected error variant: {}", err),
+        }
+    }
+}
+
+
+#[cfg(test)]
+mod ident_list_tests {
+    use crate::recursive::RecursiveParser;
+use crate::reporting::Parsable;
+use std::rc::Rc;
+    use crate::basic_parsers::{IdentParser, SpecificPunct};
+    use crate::cache::{BasicCache, CachedComb};
+    use crate::combinator::{Combinator, CombinatorExt, PakeratError};
+    use crate::core::Input;
+    use crate::multi::{Maybe, Pair};
+    
+    
+    use syn::buffer::TokenBuffer;
+    use proc_macro2::Ident;
+
+    /// A tree structure to hold parsed identifiers.
+    ///
+    /// Each node contains an identifier and an optional pointer (Rc) to the next element.
+    #[derive(Debug)]
+    #[allow(dead_code)]
+    struct IdentList {
+        ident: Ident,
+        next: Option<Rc<IdentList>>,
+    }
+
+    impl Parsable for IdentList{
+
+        type Output<'a> = IdentList;
+    }
+
+    #[test]
+    fn ident_list_parser_test() {
+        // Example input: a comma-separated list of identifiers.
+        let input_str = "a, b, c";
+        let tokens = input_str.parse().expect("Tokenization failed");
+        let buffer = TokenBuffer::new2(tokens);
+        let input = Input::new(&buffer);
+
+        // Create an owned recursive parser.
+        let list_parser = CachedComb::new(RecursiveParser::new(),
+            0, // Cache key for this recursive rule.
+            "ident_list recursion"
+        );
+
+        // Define the recursive rule:
+        //     list = ident [ ',' list ]?
+        // The rule returns an Rc<IdentList>.
+        let list_rule = 
+            Pair::new(
+                IdentParser,
+                Maybe::new(
+                    Pair::new(SpecificPunct(','), list_parser.as_ref())
+                )
+            )
+            .map(|(id, maybe_tail)| {
+                let next = maybe_tail.map(|(_, tail)| tail);
+                Rc::new(IdentList { ident: id, next })
+            });
+            
+
+
+        // Initialize the recursive parser with the rule.
+        list_parser.inner.set(&list_rule);
+
+        // Create a cache with at least one slot.
+        let mut cache = BasicCache::<1, Rc<IdentList>>::new();
+
+        // Parse the input.
+        match list_parser.parse(input, &mut cache) {
+            Ok((remaining, list)) => {
+                assert!(remaining.eof());
+                println!("Parsed IdentList:\n{:#?}", list);
+            }
+            Err(PakeratError::Regular(err)) => {
+                panic!("Parsing error: {:?}", err);
+            }
+            Err(e) => panic!("Unexpected error: {:?}", e),
+        }
+    }
+}

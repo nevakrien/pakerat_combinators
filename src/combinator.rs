@@ -1,3 +1,4 @@
+use std::any::Any;
 use crate::core::Expected;
 use crate::core::Found;
 use crate::core::Mismatch;
@@ -130,6 +131,8 @@ impl_parsble!(
     String
 );
 impl_parsble!(Ident, Punct, Literal, TokenTree, Group, Delimiter, Span, Lifetime);
+
+impl_parsble!(Rc<dyn Any>,Arc<dyn Any>);
 
 impl<E> Parsable for PakeratError<E>
 where

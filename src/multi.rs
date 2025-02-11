@@ -12,7 +12,7 @@ use crate::core::ParseError;
 use std::marker::PhantomData;
 
 ///this combinator prints evert single call to the internal combinator.
-pub struct DebugComb<INNER,Out,Cach> where
+pub struct DebugComb<INNER,Out=(),Cach=Out> where
     INNER: Combinator<Out,Cach>,
     Cach: Parsable,
     Out: Parsable,
@@ -45,6 +45,7 @@ impl<T:Parsable,O:Parsable,INNER:Combinator<T,O>> Combinator<T,O> for DebugComb<
 
 impl<T:Parsable,O:Parsable,INNER:Combinator<T,O>>  DebugComb<INNER,T,O>{
     pub fn new(name:&'static str,inner:INNER) -> Self{
+        println!("made debug {}",name);
         Self{inner,name,_phantom:PhantomData}
     }
 }
@@ -332,6 +333,81 @@ where
     }
 }
 
+/// This struct parses input one token at a time until the inner parser succeeds.
+///
+/// It will continuously consume input using `.token_tree()` until `inner` succeeds.
+/// If the inner parser succeeds, it stops and returns the result.
+/// If the end of input is reached, it returns an suc.
+///
+/// # Example Usage
+/// ```rust
+/// use crate::pakerat_combinators::combinator::Combinator;
+/// use pakerat_combinators::multi::SkipToEnd;
+/// use pakerat_combinators::basic_parsers::specific_word;
+/// use pakerat_combinators::cache::BasicCache;
+/// use pakerat_combinators::core::Input;
+/// use syn::buffer::TokenBuffer;
+///
+/// let tokens = "random text target".parse().unwrap();
+/// let buffer = TokenBuffer::new2(tokens);
+/// let input = Input::new(&buffer);
+///
+/// let my_parser = SkipToEnd::new(specific_word!("target"));
+///
+/// let mut cache = BasicCache::<0>::new();
+/// let (input, _) = my_parser.parse(input, &mut cache).unwrap();
+/// assert!(input.eof());
+/// ```
+pub struct SkipToEnd<INNER, T = (), O = T>
+where
+    INNER: Combinator<T, O>,
+    O: Parsable,
+    T: Parsable,
+{
+    pub inner: INNER,
+    pub _phantom: PhantomData<(T, O)>,
+}
+
+impl<INNER, T, O> Combinator<(), O> for SkipToEnd<INNER, T, O>
+where
+    O: Parsable,
+    T: Parsable,
+    INNER: Combinator<T, O>,
+{
+    fn parse<'a>(
+        &self,
+        mut input: Input<'a>,
+        cache: &mut dyn DynCache<'a, O>,
+    ) -> Pakerat<(Input<'a>, ())> {
+        loop {
+            match self.inner.parse_ignore(input, cache) {
+                Ok(result) => return Ok((result,())),
+                Err(PakeratError::Regular(_)) => {
+                    if let Some((_, new_input)) = input.token_tree() {
+                        input = new_input;
+                    } else {
+                        return Ok((input,()))
+                    }
+                }
+                Err(PakeratError::Recursive(e)) => return Err(PakeratError::Recursive(e)),
+            }
+        }
+    }
+}
+
+impl<INNER, T, O> SkipToEnd<INNER, T, O>
+where
+    INNER: Combinator<T, O>,
+    O: Parsable,
+    T: Parsable,
+{
+    pub fn new(inner: INNER) -> Self {
+        Self {
+            inner,
+            _phantom: PhantomData,
+        }
+    }
+}
 
 
 /// This struct attempts to parse an optional occurrence of an inner parser.
