@@ -11,7 +11,7 @@ use crate::core::ParseError;
 
 use std::marker::PhantomData;
 
-///this combinator prints stuff for debuging
+///this combinator prints evert single call to the internal combinator.
 pub struct DebugComb<INNER,Out,Cach> where
     INNER: Combinator<Out,Cach>,
     Cach: Parsable,
@@ -249,6 +249,90 @@ where
     }
 }
 
+/// This struct parses input one token at a time until the inner parser succeeds.
+///
+/// It will continuously consume input using `.token_tree()` until `inner` succeeds.
+/// If the inner parser succeeds, it stops and returns the result.
+/// If the end of input is reached, it returns an error.
+///
+/// # Example Usage
+/// ```rust
+/// use crate::pakerat_combinators::combinator::Combinator;
+/// use pakerat_combinators::multi::SkipTo;
+/// use pakerat_combinators::basic_parsers::specific_word;
+/// use pakerat_combinators::cache::BasicCache;
+/// use pakerat_combinators::core::Input;
+/// use syn::buffer::TokenBuffer;
+///
+/// let tokens = "random text target".parse().unwrap();
+/// let buffer = TokenBuffer::new2(tokens);
+/// let input = Input::new(&buffer);
+///
+/// let my_parser = SkipTo::new(specific_word!("target"));
+///
+/// let mut cache = BasicCache::<0>::new();
+/// let (_, parsed_ident) = my_parser.parse(input, &mut cache).unwrap();
+/// assert_eq!(parsed_ident.to_string(), "target");
+/// ```
+pub struct SkipTo<INNER, T = (), O = T>
+where
+    INNER: Combinator<T, O>,
+    O: Parsable,
+    T: Parsable,
+{
+    pub inner: INNER,
+    pub _phantom: PhantomData<(T, O)>,
+}
+
+impl<INNER, T, O> Combinator<T, O> for SkipTo<INNER, T, O>
+where
+    O: Parsable,
+    T: Parsable,
+    INNER: Combinator<T, O>,
+{
+    fn parse<'a>(
+        &self,
+        mut input: Input<'a>,
+        cache: &mut dyn DynCache<'a, O>,
+    ) -> Pakerat<(Input<'a>, T::Output<'a>)> {
+        loop {
+            match self.inner.parse(input, cache) {
+                Ok(result) => return Ok(result),
+                Err(PakeratError::Regular(_)) => {
+                    if let Some((_, new_input)) = input.token_tree() {
+                        input = new_input;
+                    } else {
+                        return Err(PakeratError::Regular(
+                            ParseError::Simple(
+                                Mismatch{
+                                    actual:Found::end_of(input),
+                                    expected:Expected::Text("any token")
+                                }
+                            )
+                        ));
+                    }
+                }
+                Err(PakeratError::Recursive(e)) => return Err(PakeratError::Recursive(e)),
+            }
+        }
+    }
+}
+
+impl<INNER, T, O> SkipTo<INNER, T, O>
+where
+    INNER: Combinator<T, O>,
+    O: Parsable,
+    T: Parsable,
+{
+    pub fn new(inner: INNER) -> Self {
+        Self {
+            inner,
+            _phantom: PhantomData,
+        }
+    }
+}
+
+
 
 /// This struct attempts to parse an optional occurrence of an inner parser.
 ///
@@ -340,6 +424,8 @@ where
 ///
 /// It keeps collecting results until the inner parser fails with a `Regular` error.
 /// If the inner parser fails with a `Recursive` error, the error is propagated.
+/// 
+/// Note that this parser is very easy to abuse into non linear parse times. Try and avoid calling it recursively.
 ///
 /// # Example Usage
 /// ```rust
@@ -438,6 +524,8 @@ where
 ///
 /// It behaves like `Many0` but ensures at least one successful parse before stopping.
 /// If the first attempt fails, `Many1` returns an error.
+///
+/// Note that this parser is very easy to abuse into non linear parse times. Try and avoid calling it recursively.
 ///
 /// # Example Usage
 /// ```rust

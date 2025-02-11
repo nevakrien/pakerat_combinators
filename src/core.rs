@@ -56,7 +56,7 @@ pub enum Found {
 
 impl Found {
     pub fn start_of(spot: Input) -> Self {
-        if spot.eof() {
+        if spot.cursor.eof() {
             return spot
                 .block_end
                 .map(Found::End)
@@ -73,7 +73,7 @@ impl Found {
 
     ///end of the current cursor not the entire input
     pub fn end_of(spot: Input) -> Self {
-        if spot.eof() {
+        if spot.cursor.eof() {
             return spot
                 .block_end
                 .map(Found::End)

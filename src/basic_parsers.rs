@@ -201,6 +201,27 @@ impl<O:Parsable> Combinator<(),O> for Nothing{
     ) -> Pakerat<(Input<'a>, ())> {Ok((input,()))}   
 }
 
+// Fails if input is not at EOF.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct IsEOF;
+impl<T: Parsable> Combinator<(), T> for IsEOF {
+    fn parse<'a>(
+        &self,
+        input: Input<'a>,
+        _cache: &mut dyn DynCache<'a, T>,
+    ) -> Pakerat<(Input<'a>, ())> {
+        if input.eof() {
+            Ok((input, ()))
+        } else {
+            Err(PakeratError::Regular(ParseError::Message(
+                input.span(),
+                "Expected end of input",
+            )))
+        }
+    }
+}
+
+
 /// parses a specific char that can be in [`Punct`]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SpecificPunct(pub char);
